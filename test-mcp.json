@@ -1,0 +1,25 @@
+{
+  "servers": {
+    "weather-server": {
+      "command": "weather-mcp-server",
+      "args": ["--api-key", "test-key"],
+      "env": {
+        "API_KEY": "test-api-key"
+      },
+      "timeout": 30000,
+      "disabled": false
+    },
+    "file-server": {
+      "command": "file-mcp-server",
+      "args": ["--root", "/tmp"],
+      "timeout": 15000,
+      "disabled": false
+    },
+    "disabled-server": {
+      "command": "disabled-server",
+      "args": [],
+      "timeout": 30000,
+      "disabled": true
+    }
+  }
+}

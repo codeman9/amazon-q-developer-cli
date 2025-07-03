@@ -3,7 +3,8 @@ use std::{
     fs,
 };
 
-use semantic_search_client::SemanticSearchClient;
+use semantic_search_client::{SemanticSearchClient, McpToolContext, McpServerConfig, ToolParameter};
+use chrono::Utc;
 
 #[test]
 fn test_client_initialization() {
@@ -201,6 +202,155 @@ fn test_remove_context() {
     // Verify contexts were removed
     let contexts = client.get_contexts();
     assert!(contexts.is_empty());
+
+    // Clean up
+    fs::remove_dir_all(temp_dir).unwrap_or(());
+}
+
+#[test]
+fn test_mcp_context_creation() {
+    if env::var("MEMORY_BANK_USE_REAL_EMBEDDERS").is_err() {
+        println!("Skipping test: MEMORY_BANK_USE_REAL_EMBEDDERS not set");
+        return;
+    }
+
+    // Create a temporary directory for the test
+    let temp_dir = env::temp_dir().join("semantic_search_test_mcp_context");
+    let base_dir = temp_dir.join("semantic_search");
+    fs::create_dir_all(&base_dir).unwrap();
+
+    // Create a semantic search client
+    let mut client = SemanticSearchClient::new(base_dir.clone()).unwrap();
+
+    // Create a mock MCP tool context
+    let mcp_context = McpToolContext {
+        id: "weather-server_get_weather".to_string(),
+        server_name: "weather-server".to_string(),
+        tool_name: "get_weather".to_string(),
+        description: "Get current weather for a location".to_string(),
+        parameters: vec![
+            ToolParameter {
+                name: "location".to_string(),
+                param_type: "string".to_string(),
+                description: Some("The location to get weather for".to_string()),
+                required: true,
+            },
+            ToolParameter {
+                name: "units".to_string(),
+                param_type: "string".to_string(),
+                description: Some("Temperature units".to_string()),
+                required: false,
+            },
+        ],
+        server_config: McpServerConfig {
+            command: "weather-mcp-server".to_string(),
+            args: vec!["--api-key".to_string(), "test".to_string()],
+            env: None,
+            timeout: 30000,
+        },
+        indexed_content: "Tool: get_weather from weather-server server. Description: Get current weather for a location. Parameters: location (string, required), units (string). Categories: weather, api. Server command: weather-mcp-server".to_string(),
+        last_updated: Utc::now(),
+    };
+
+    // Add the MCP context
+    let context_id = client.add_mcp_context(mcp_context, false).unwrap();
+
+    // Verify the context was added
+    let contexts = client.get_all_contexts();
+    assert_eq!(contexts.len(), 1);
+    assert!(contexts.iter().any(|c| c.id == context_id));
+
+    // Search for weather-related content
+    let search_results = client.search_all("weather location", Some(5)).unwrap();
+    assert!(!search_results.is_empty());
+    
+    let (found_context_id, results) = &search_results[0];
+    assert_eq!(found_context_id, &context_id);
+    assert!(!results.is_empty());
+
+    // Verify the search result contains MCP tool metadata
+    let result = &results[0];
+    let payload = &result.point.payload;
+    assert_eq!(payload.get("type").unwrap().as_str().unwrap(), "mcp_tool");
+    assert_eq!(payload.get("server_name").unwrap().as_str().unwrap(), "weather-server");
+    assert_eq!(payload.get("tool_name").unwrap().as_str().unwrap(), "get_weather");
+
+    // Clean up
+    fs::remove_dir_all(temp_dir).unwrap_or(());
+}
+
+#[test]
+fn test_mcp_contexts_batch_creation() {
+    if env::var("MEMORY_BANK_USE_REAL_EMBEDDERS").is_err() {
+        println!("Skipping test: MEMORY_BANK_USE_REAL_EMBEDDERS not set");
+        return;
+    }
+
+    // Create a temporary directory for the test
+    let temp_dir = env::temp_dir().join("semantic_search_test_mcp_batch");
+    let base_dir = temp_dir.join("semantic_search");
+    fs::create_dir_all(&base_dir).unwrap();
+
+    // Create a semantic search client
+    let mut client = SemanticSearchClient::new(base_dir.clone()).unwrap();
+
+    // Create multiple MCP tool contexts
+    let mcp_contexts = vec![
+        McpToolContext {
+            id: "weather-server_get_weather".to_string(),
+            server_name: "weather-server".to_string(),
+            tool_name: "get_weather".to_string(),
+            description: "Get current weather for a location".to_string(),
+            parameters: vec![],
+            server_config: McpServerConfig {
+                command: "weather-mcp-server".to_string(),
+                args: vec![],
+                env: None,
+                timeout: 30000,
+            },
+            indexed_content: "Tool: get_weather from weather-server server. Description: Get current weather for a location. Categories: weather, api.".to_string(),
+            last_updated: Utc::now(),
+        },
+        McpToolContext {
+            id: "file-server_read_file".to_string(),
+            server_name: "file-server".to_string(),
+            tool_name: "read_file".to_string(),
+            description: "Read contents of a file".to_string(),
+            parameters: vec![],
+            server_config: McpServerConfig {
+                command: "file-mcp-server".to_string(),
+                args: vec![],
+                env: None,
+                timeout: 30000,
+            },
+            indexed_content: "Tool: read_file from file-server server. Description: Read contents of a file. Categories: file, io.".to_string(),
+            last_updated: Utc::now(),
+        },
+    ];
+
+    // Add the MCP contexts as a batch
+    let context_id = client.add_mcp_contexts(
+        mcp_contexts,
+        "MCP Tools Collection",
+        "Collection of MCP tools from various servers",
+        true, // Make it persistent so metadata is stored
+    ).unwrap();
+
+    // Verify the context was added
+    let contexts = client.get_contexts();
+    assert_eq!(contexts.len(), 1);
+    
+    let context = contexts.iter().find(|c| c.id == context_id).unwrap();
+    assert_eq!(context.name, "MCP Tools Collection");
+    assert_eq!(context.item_count, 2);
+
+    // Search for weather-related content
+    let weather_results = client.search_all("weather", Some(5)).unwrap();
+    assert!(!weather_results.is_empty());
+
+    // Search for file-related content
+    let file_results = client.search_all("file read", Some(5)).unwrap();
+    assert!(!file_results.is_empty());
 
     // Clean up
     fs::remove_dir_all(temp_dir).unwrap_or(());

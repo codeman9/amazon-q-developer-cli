@@ -34,6 +34,9 @@ pub enum Setting {
     McpLoadedBefore,
     ChatDefaultModel,
     ChatDefaultAgent,
+    McpAutoIndexingEnabled,
+    McpIndexRefreshInterval,
+    McpIndexingLogLevel,
 }
 
 impl AsRef<str> for Setting {
@@ -56,6 +59,9 @@ impl AsRef<str> for Setting {
             Self::McpLoadedBefore => "mcp.loadedBefore",
             Self::ChatDefaultModel => "chat.defaultModel",
             Self::ChatDefaultAgent => "chat.defaultAgent",
+            Self::McpAutoIndexingEnabled => "mcp.autoIndexing.enabled",
+            Self::McpIndexRefreshInterval => "mcp.autoIndexing.refreshInterval",
+            Self::McpIndexingLogLevel => "mcp.autoIndexing.logLevel",
         }
     }
 }
@@ -88,6 +94,9 @@ impl TryFrom<&str> for Setting {
             "mcp.loadedBefore" => Ok(Self::McpLoadedBefore),
             "chat.defaultModel" => Ok(Self::ChatDefaultModel),
             "chat.defaultAgent" => Ok(Self::ChatDefaultAgent),
+            "mcp.autoIndexing.enabled" => Ok(Self::McpAutoIndexingEnabled),
+            "mcp.autoIndexing.refreshInterval" => Ok(Self::McpIndexRefreshInterval),
+            "mcp.autoIndexing.logLevel" => Ok(Self::McpIndexingLogLevel),
             _ => Err(DatabaseError::InvalidSetting(value.to_string())),
         }
     }

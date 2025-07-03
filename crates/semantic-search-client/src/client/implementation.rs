@@ -31,6 +31,7 @@ use crate::types::{
     ContextMap,
     DataPoint,
     KnowledgeContext,
+    McpToolContext,
     ProgressStatus,
     SearchResults,
 };
@@ -1084,5 +1085,116 @@ impl SemanticSearchClient {
     fn save_contexts_metadata(&self) -> Result<()> {
         let contexts_file = self.base_dir.join("contexts.json");
         utils::save_json_to_file(&contexts_file, &self.persistent_contexts)
+    }
+
+    /// Add MCP tool contexts from processed tool schemas
+    ///
+    /// # Arguments
+    ///
+    /// * `mcp_contexts` - Vector of MCP tool contexts to add
+    /// * `context_name` - Name for the MCP context collection
+    /// * `context_description` - Description for the MCP context collection
+    /// * `is_persistent` - Whether to persist this context to disk
+    ///
+    /// # Returns
+    ///
+    /// The ID of the created context
+    pub fn add_mcp_contexts(
+        &mut self,
+        mcp_contexts: Vec<McpToolContext>,
+        context_name: &str,
+        context_description: &str,
+        is_persistent: bool,
+    ) -> Result<String> {
+        // Validate inputs
+        if mcp_contexts.is_empty() {
+            return Err(SemanticSearchError::InvalidArgument(
+                "MCP contexts cannot be empty".to_string(),
+            ));
+        }
+
+        if context_name.is_empty() {
+            return Err(SemanticSearchError::InvalidArgument(
+                "Context name cannot be empty".to_string(),
+            ));
+        }
+
+        // Generate a unique ID for this context
+        let context_id = utils::generate_context_id();
+
+        // Create the context directory
+        let context_dir = self.create_context_directory(&context_id, is_persistent)?;
+
+        // Create a new semantic context
+        let mut semantic_context = SemanticContext::new(context_dir.join("data.json"))?;
+
+        // Convert MCP contexts to data points
+        let mut data_points = Vec::new();
+        for (index, mcp_context) in mcp_contexts.iter().enumerate() {
+            let data_point = self.create_data_point_from_mcp_context(mcp_context, index)?;
+            data_points.push(data_point);
+        }
+
+        // Add the data points to the context
+        semantic_context.add_data_points(data_points)?;
+
+        // Save and store the context using the standard pattern
+        self.save_and_store_context(
+            &context_id,
+            context_name,
+            context_description,
+            is_persistent,
+            None,
+            semantic_context,
+        )?;
+
+        Ok(context_id)
+    }
+
+    /// Add a single MCP tool context
+    ///
+    /// # Arguments
+    ///
+    /// * `mcp_context` - The MCP tool context to add
+    /// * `is_persistent` - Whether to persist this context to disk
+    ///
+    /// # Returns
+    ///
+    /// The ID of the created context
+    pub fn add_mcp_context(
+        &mut self,
+        mcp_context: McpToolContext,
+        is_persistent: bool,
+    ) -> Result<String> {
+        let context_name = format!("MCP Tool: {}", mcp_context.tool_name);
+        let context_description = format!("Tool {} from {} server", mcp_context.tool_name, mcp_context.server_name);
+        
+        self.add_mcp_contexts(vec![mcp_context], &context_name, &context_description, is_persistent)
+    }
+
+    /// Create a data point from an MCP tool context
+    fn create_data_point_from_mcp_context(&self, mcp_context: &McpToolContext, index: usize) -> Result<DataPoint> {
+        // Generate embeddings for the indexed content
+        let embeddings = self.embedder.embed(&mcp_context.indexed_content)?;
+
+        // Create metadata for the MCP tool
+        let mut payload = HashMap::new();
+        payload.insert("type".to_string(), Value::String("mcp_tool".to_string()));
+        payload.insert("server_name".to_string(), Value::String(mcp_context.server_name.clone()));
+        payload.insert("tool_name".to_string(), Value::String(mcp_context.tool_name.clone()));
+        payload.insert("tool_id".to_string(), Value::String(mcp_context.id.clone()));
+        payload.insert("description".to_string(), Value::String(mcp_context.description.clone()));
+        payload.insert("parameter_count".to_string(), Value::Number(mcp_context.parameters.len().into()));
+        payload.insert("content".to_string(), Value::String(mcp_context.indexed_content.clone()));
+        
+        // Add server configuration details
+        payload.insert("server_command".to_string(), Value::String(mcp_context.server_config.command.clone()));
+        payload.insert("server_timeout".to_string(), Value::Number(mcp_context.server_config.timeout.into()));
+
+        Ok(DataPoint {
+            id: index,
+            payload,
+            vector: embeddings,
+        })
     }
 }

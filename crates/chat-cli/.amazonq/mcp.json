@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "test-weather": {
+      "command": "weather-mcp-server",
+      "args": [
+        "--api-key",
+        "test123"
+      ],
+      "env": {},
+      "timeout": 120000,
+      "disabled": false
+    }
+  }
+}
