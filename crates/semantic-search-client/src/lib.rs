@@ -30,12 +30,17 @@ pub use error::{
 };
 pub use types::{
     DataPoint,
+    EnhancedSearchResult,
     FileType,
     KnowledgeContext,
+    McpServerConfig,
+    McpToolContext,
     OperationStatus,
     OperationType,
     ProgressInfo,
     ProgressStatus,
     SearchResult,
+    SearchResultType,
     SystemStatus,
+    ToolParameter,
 };
