@@ -424,15 +424,31 @@ impl KnowledgeStore {
         let processor = ToolSchemaProcessor::new();
         let mut total_tools = 0;
         let mut indexed_servers = 0;
+        let mut updated_servers = 0;
 
         for (server, tools_result) in tool_schemas {
             match processor.create_mcp_contexts(&server, &tools_result) {
                 Ok(contexts) => {
                     if !contexts.is_empty() {
-                        // Add contexts to semantic search client
                         let context_name = format!("mcp_{}", server.name);
                         let context_description = format!("MCP tools from {} server", server.name);
                         
+                        // Check if a context for this server already exists and remove it
+                        let existing_contexts = self.client.get_contexts().await;
+                        let existing_context = existing_contexts.iter().find(|ctx| {
+                            ctx.name == context_name && ctx.description == context_description
+                        });
+                        
+                        let is_update = existing_context.is_some();
+                        
+                        if let Some(existing) = existing_context {
+                            // Remove existing context to avoid duplicates
+                            if let Err(e) = self.client.remove_context_by_id(&existing.id).await {
+                                eprintln!("Warning: Failed to remove existing context for {}: {}", server.name, e);
+                            }
+                        }
+                        
+                        // Add new context (whether it's new or replacing an existing one)
                         match self.client.add_mcp_contexts(
                             contexts.clone(),
                             &context_name,
@@ -441,7 +457,11 @@ impl KnowledgeStore {
                         ).await {
                             Ok(_) => {
                                 total_tools += contexts.len();
-                                indexed_servers += 1;
+                                if is_update {
+                                    updated_servers += 1;
+                                } else {
+                                    indexed_servers += 1;
+                                }
                             }
                             Err(e) => {
                                 eprintln!("Warning: Failed to index tools from {}: {}", server.name, e);
@@ -455,10 +475,21 @@ impl KnowledgeStore {
             }
         }
 
-        if indexed_servers == 0 {
+        if indexed_servers == 0 && updated_servers == 0 {
             Ok("No MCP tools could be indexed".to_string())
         } else {
-            Ok(format!("Indexed {} tools from {} MCP servers", total_tools, indexed_servers))
+            let mut message = String::new();
+            if indexed_servers > 0 {
+                message.push_str(&format!("Indexed {} new servers", indexed_servers));
+            }
+            if updated_servers > 0 {
+                if !message.is_empty() {
+                    message.push_str(", ");
+                }
+                message.push_str(&format!("updated {} existing servers", updated_servers));
+            }
+            message.push_str(&format!(" with {} total tools", total_tools));
+            Ok(message)
         }
     }
 
@@ -590,6 +621,53 @@ impl KnowledgeStore {
         }
 
         score
+    }
+
+    /// Clean up duplicate MCP contexts (useful for fixing existing duplicates)
+    pub async fn cleanup_duplicate_mcp_contexts(&mut self) -> Result<String, String> {
+        let contexts = self.client.get_contexts().await;
+        let mut server_contexts: std::collections::HashMap<String, Vec<&KnowledgeContext>> = std::collections::HashMap::new();
+        
+        // Group contexts by server name
+        for context in &contexts {
+            if context.name.starts_with("mcp_") {
+                let server_name = context.name.strip_prefix("mcp_").unwrap_or(&context.name);
+                server_contexts.entry(server_name.to_string()).or_default().push(context);
+            }
+        }
+        
+        let mut removed_count = 0;
+        let mut kept_count = 0;
+        
+        // For each server, keep only the most recent context
+        for (server_name, mut contexts) in server_contexts {
+            if contexts.len() > 1 {
+                // Sort by creation time, keep the most recent
+                contexts.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+                
+                // Remove all but the first (most recent)
+                for context_to_remove in contexts.iter().skip(1) {
+                    match self.client.remove_context_by_id(&context_to_remove.id).await {
+                        Ok(_) => {
+                            removed_count += 1;
+                            println!("Removed duplicate context for server: {}", server_name);
+                        }
+                        Err(e) => {
+                            eprintln!("Warning: Failed to remove duplicate context for {}: {}", server_name, e);
+                        }
+                    }
+                }
+                kept_count += 1;
+            } else {
+                kept_count += contexts.len();
+            }
+        }
+        
+        if removed_count > 0 {
+            Ok(format!("Cleaned up {} duplicate contexts, kept {} unique server contexts", removed_count, kept_count))
+        } else {
+            Ok("No duplicate MCP contexts found".to_string())
+        }
     }
 }
 
