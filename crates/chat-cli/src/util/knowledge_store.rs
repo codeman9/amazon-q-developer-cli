@@ -300,6 +300,15 @@ impl KnowledgeStore {
 
     /// Automatically index MCP tools if auto-indexing is enabled
     async fn auto_index_mcp_tools(&mut self) -> Result<(), String> {
+        // Check if selective loading is enabled - if so, skip auto-indexing
+        use crate::database::settings::{Setting, Settings};
+        if let Ok(settings) = Settings::new().await {
+            if settings.get_bool(Setting::McpSelectiveLoadingEnabled).unwrap_or(false) {
+                // Selective loading is enabled, skip auto-indexing
+                return Ok(());
+            }
+        }
+
         // Check if auto-indexing is enabled
         if !self.is_mcp_auto_indexing_enabled().await {
             return Ok(());
