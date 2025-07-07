@@ -28,17 +28,21 @@ impl SelectiveLoadingCommand {
         let enabled = settings.get_bool(Setting::McpSelectiveLoadingEnabled).unwrap_or(false);
         
         if enabled {
-            // Try to get server stats if possible
-            if let Ok(loader) = SelectiveMcpLoader::new().await {
-                let stats = loader.get_server_stats().await;
-                Ok(format!(
-                    "🔧 Selective MCP Loading: ✅ ENABLED\n\
-                     📊 {} total servers available\n\
-                     📊 {} currently loaded\n\
-                     💡 Servers are loaded on-demand based on your queries",
-                    stats.total_available,
-                    stats.currently_loaded
-                ))
+            // Do lightweight discovery for stats without creating full SelectiveMcpLoader
+            use crate::util::mcp_processor::McpDiscoveryService;
+            
+            if let Ok(discovery_service) = McpDiscoveryService::new().await {
+                if let Ok(servers) = discovery_service.discover_servers_with_options(false).await {
+                    Ok(format!(
+                        "🔧 Selective MCP Loading: ✅ ENABLED\n\
+                         📊 {} total servers available\n\
+                         📊 0 currently loaded\n\
+                         💡 Servers are loaded on-demand based on your queries",
+                        servers.len()
+                    ))
+                } else {
+                    Ok("🔧 Selective MCP Loading: ✅ ENABLED (no MCP configuration found)".to_string())
+                }
             } else {
                 Ok("🔧 Selective MCP Loading: ✅ ENABLED (no MCP configuration found)".to_string())
             }
