@@ -60,12 +60,18 @@ impl McpDiscoveryService {
     /// Discover all enabled MCP servers from both workspace and global configurations
     #[instrument(skip(self))]
     pub async fn discover_servers(&self) -> McpResult<Vec<McpServerInfo>> {
+        self.discover_servers_with_options(true).await
+    }
+
+    /// Discover all enabled MCP servers with options
+    #[instrument(skip(self))]
+    pub async fn discover_servers_with_options(&self, verbose: bool) -> McpResult<Vec<McpServerInfo>> {
         info!("Starting MCP server discovery");
         
         let mut servers = Vec::new();
         
         // Try workspace configuration first
-        match self.discover_servers_from_scope("workspace").await {
+        match self.discover_servers_from_scope_with_options("workspace", verbose).await {
             Ok(workspace_servers) => {
                 debug!("Found {} servers in workspace scope", workspace_servers.len());
                 servers.extend(workspace_servers);
@@ -76,7 +82,7 @@ impl McpDiscoveryService {
         }
         
         // Then try global configuration
-        match self.discover_servers_from_scope("global").await {
+        match self.discover_servers_from_scope_with_options("global", verbose).await {
             Ok(global_servers) => {
                 debug!("Found {} servers in global scope", global_servers.len());
                 servers.extend(global_servers);
@@ -242,34 +248,54 @@ impl McpDiscoveryService {
 
     /// Discover MCP servers from a specific scope (workspace or global)
     async fn discover_servers_from_scope(&self, scope: &str) -> Result<Vec<McpServerInfo>> {
+        self.discover_servers_from_scope_with_options(scope, true).await
+    }
+
+    /// Discover MCP servers from a specific scope with options
+    async fn discover_servers_from_scope_with_options(&self, scope: &str, verbose: bool) -> Result<Vec<McpServerInfo>> {
         let config_path = match scope {
             "workspace" => workspace_mcp_config_path(&self.os)?,
             "global" => global_mcp_config_path(&self.os)?,
             _ => bail!("Invalid scope: {}. Must be 'workspace' or 'global'", scope),
         };
 
-        self.discover_servers_from_path(&config_path, scope).await
+        self.discover_servers_from_path_with_options(&config_path, scope, verbose).await
     }
 
     /// Discover MCP servers from a specific configuration file path
     pub async fn discover_servers_from_path(&self, config_path: &Path, scope: &str) -> Result<Vec<McpServerInfo>> {
-        println!("🔍 Discovering servers from path: {}", config_path.display());
+        self.discover_servers_from_path_with_options(config_path, scope, true).await
+    }
+
+    /// Discover MCP servers from a specific configuration file path with options
+    pub async fn discover_servers_from_path_with_options(&self, config_path: &Path, scope: &str, verbose: bool) -> Result<Vec<McpServerInfo>> {
+        if verbose {
+            println!("🔍 Discovering servers from path: {}", config_path.display());
+        }
         
         if !self.os.fs.exists(config_path) {
-            println!("❌ Config file does not exist");
+            if verbose {
+                println!("❌ Config file does not exist");
+            }
             return Ok(Vec::new());
         }
 
-        println!("✅ Config file exists, loading...");
+        if verbose {
+            println!("✅ Config file exists, loading...");
+        }
         let config = McpServerConfig::load_from_file(&self.os, config_path)
             .await
             .with_context(|| format!("Failed to load MCP config from {}", config_path.display()))?;
 
-        println!("📊 Loaded config with {} servers", config.mcp_servers.len());
+        if verbose {
+            println!("📊 Loaded config with {} servers", config.mcp_servers.len());
+        }
         
         let mut servers = Vec::new();
         for (name, tool_config) in config.mcp_servers {
-            println!("🔧 Processing server: {} (disabled: {})", name, tool_config.disabled);
+            if verbose {
+                println!("🔧 Processing server: {} (disabled: {})", name, tool_config.disabled);
+            }
             let server_info = McpServerInfo {
                 name,
                 command: tool_config.command,

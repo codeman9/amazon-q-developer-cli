@@ -427,8 +427,10 @@ impl KnowledgeStore {
         let mut updated_servers = 0;
 
         for (server, tools_result) in tool_schemas {
+            println!("🔍 Processing tools for server: {}", server.name);
             match processor.create_mcp_contexts(&server, &tools_result) {
                 Ok(contexts) => {
+                    println!("📝 Created {} contexts for server: {}", contexts.len(), server.name);
                     if !contexts.is_empty() {
                         let context_name = format!("mcp_{}", server.name);
                         let context_description = format!("MCP tools from {} server", server.name);
@@ -443,9 +445,12 @@ impl KnowledgeStore {
                         
                         if let Some(existing) = existing_context {
                             // Remove existing context to avoid duplicates
+                            println!("🔄 Updating existing context for server: {}", server.name);
                             if let Err(e) = self.client.remove_context_by_id(&existing.id).await {
                                 eprintln!("Warning: Failed to remove existing context for {}: {}", server.name, e);
                             }
+                        } else {
+                            println!("✨ Creating new context for server: {}", server.name);
                         }
                         
                         // Add new context (whether it's new or replacing an existing one)
@@ -459,18 +464,22 @@ impl KnowledgeStore {
                                 total_tools += contexts.len();
                                 if is_update {
                                     updated_servers += 1;
+                                    println!("✅ Successfully updated server: {} with {} tools", server.name, contexts.len());
                                 } else {
                                     indexed_servers += 1;
+                                    println!("✅ Successfully indexed server: {} with {} tools", server.name, contexts.len());
                                 }
                             }
                             Err(e) => {
-                                eprintln!("Warning: Failed to index tools from {}: {}", server.name, e);
+                                eprintln!("❌ Failed to index tools from {}: {}", server.name, e);
                             }
                         }
+                    } else {
+                        println!("⚠️  No tools found for server: {}", server.name);
                     }
                 }
                 Err(e) => {
-                    eprintln!("Warning: Failed to process tools from {}: {}", server.name, e);
+                    eprintln!("❌ Failed to process tools from {}: {}", server.name, e);
                 }
             }
         }

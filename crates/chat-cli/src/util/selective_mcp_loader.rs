@@ -24,7 +24,8 @@ impl SelectiveMcpLoader {
     /// Create a new selective MCP loader
     pub async fn new() -> Result<Self> {
         let discovery_service = McpDiscoveryService::new().await?;
-        let servers = discovery_service.discover_servers().await?;
+        // Use quiet mode to prevent duplicate discovery messages
+        let servers = discovery_service.discover_servers_with_options(false).await?;
         
         // Convert to HashMap for easy lookup
         let available_servers = servers
