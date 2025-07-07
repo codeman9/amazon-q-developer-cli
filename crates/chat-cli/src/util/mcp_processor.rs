@@ -417,8 +417,6 @@ impl ToolSchemaProcessor {
             server.command
         );
         
-        println!("DEBUG: Generated searchable text for {}: {}", tool_name, searchable_text);
-        
         Some(searchable_text)
     }
 

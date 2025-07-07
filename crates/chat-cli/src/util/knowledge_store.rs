@@ -321,10 +321,8 @@ impl KnowledgeStore {
 
         // Perform background indexing
         match self.background_index_mcp_tools().await {
-            Ok(message) => {
-                if self.get_mcp_indexing_log_level().await >= McpIndexingLogLevel::Info {
-                    println!("🔧 MCP Auto-indexing: {}", message);
-                }
+            Ok(_message) => {
+                // Auto-indexing completed successfully
                 Ok(())
             }
             Err(e) => {
@@ -465,7 +463,6 @@ impl KnowledgeStore {
         }
         
         // Create MCP discovery service
-        println!("🔧 DEBUG: Creating MCP discovery service");
         let discovery_service = match McpDiscoveryService::new().await {
             Ok(service) => service,
             Err(e) => {
@@ -810,7 +807,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_automatic_mcp_indexing_on_initialization() {
-        println!("\n🔧 Testing Automatic MCP Indexing on Initialization");
         
         // Test that KnowledgeStore initialization triggers automatic MCP indexing
         let store_result = KnowledgeStore::new().await;
@@ -828,7 +824,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_mcp_auto_indexing_enabled_check() {
-        println!("\n🔧 Testing MCP Auto-indexing Enabled Check");
         
         let store = KnowledgeStore::new().await.unwrap();
         
@@ -844,7 +839,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_mcp_indexing_log_level() {
-        println!("\n🔧 Testing MCP Indexing Log Level");
         
         let store = KnowledgeStore::new().await.unwrap();
         
@@ -860,7 +854,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_mcp_indexing_log_level_from_string() {
-        println!("\n🔧 Testing MCP Indexing Log Level String Conversion");
         
         // Test all log level conversions
         assert_eq!(McpIndexingLogLevel::from_str("silent"), McpIndexingLogLevel::Silent);
@@ -881,7 +874,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_background_mcp_indexing() {
-        println!("\n🔧 Testing Background MCP Indexing");
         
         let mut store = KnowledgeStore::new().await.unwrap();
         

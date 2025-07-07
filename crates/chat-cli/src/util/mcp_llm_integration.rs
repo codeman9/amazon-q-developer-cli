@@ -158,7 +158,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_mcp_llm_integration_creation() {
-        println!("\n🔧 Testing MCP LLM Integration Creation");
         
         let integration_result = McpLlmIntegration::new().await;
         assert!(integration_result.is_ok(), "Should be able to create MCP LLM integration");
@@ -175,7 +174,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_tool_search_functionality() {
-        println!("\n🔧 Testing Tool Search Functionality");
         
         let integration = McpLlmIntegration::new().await.unwrap();
         
@@ -203,7 +201,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_tool_statistics() {
-        println!("\n🔧 Testing Tool Statistics");
         
         let integration = McpLlmIntegration::new().await.unwrap();
         
@@ -224,7 +221,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_key_term_extraction() {
-        println!("\n🔧 Testing Key Term Extraction");
         
         let integration = McpLlmIntegration::new().await.unwrap();
         
