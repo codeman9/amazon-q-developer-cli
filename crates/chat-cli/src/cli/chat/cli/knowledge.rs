@@ -39,6 +39,8 @@ pub enum KnowledgeSubcommand {
     Clear,
     /// Clean up duplicate MCP server contexts
     Cleanup,
+    /// Refresh MCP tools from configured servers
+    RefreshMcp,
     /// Show background operation status
     Status,
     /// Cancel a background operation
@@ -105,6 +107,7 @@ impl KnowledgeSubcommand {
             KnowledgeSubcommand::Update { path } => Self::handle_update(os, path).await,
             KnowledgeSubcommand::Clear => Self::handle_clear(session).await,
             KnowledgeSubcommand::Cleanup => Self::handle_cleanup().await,
+            KnowledgeSubcommand::RefreshMcp => Self::handle_refresh_mcp().await,
             KnowledgeSubcommand::Status => Self::handle_status().await,
             KnowledgeSubcommand::Cancel { operation_id } => Self::handle_cancel(operation_id.as_deref()).await,
         }
@@ -318,6 +321,17 @@ impl KnowledgeSubcommand {
         match store.cleanup_duplicate_mcp_contexts().await {
             Ok(message) => OperationResult::Success(message),
             Err(e) => OperationResult::Error(format!("Failed to cleanup duplicates: {}", e)),
+        }
+    }
+
+    /// Handle refresh MCP tools operation
+    async fn handle_refresh_mcp() -> OperationResult {
+        let async_knowledge_store = KnowledgeStore::get_async_instance().await;
+        let mut store = async_knowledge_store.lock().await;
+
+        match store.refresh_mcp_tools().await {
+            Ok(message) => OperationResult::Success(format!("🔧 MCP Tools Refreshed: {}", message)),
+            Err(e) => OperationResult::Error(format!("Failed to refresh MCP tools: {}", e)),
         }
     }
 

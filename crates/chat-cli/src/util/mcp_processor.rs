@@ -407,7 +407,7 @@ impl ToolSchemaProcessor {
         let parameters_text = self.extract_parameters_text(tool);
         let categories_text = self.extract_categories_text(tool);
         
-        Some(format!(
+        let searchable_text = format!(
             "Tool: {} from {} server. Description: {}. Parameters: {}. Categories: {}. Server command: {}",
             tool_name,
             server.name,
@@ -415,7 +415,11 @@ impl ToolSchemaProcessor {
             parameters_text,
             categories_text,
             server.command
-        ))
+        );
+        
+        println!("DEBUG: Generated searchable text for {}: {}", tool_name, searchable_text);
+        
+        Some(searchable_text)
     }
 
     /// Convert a single tool JSON to McpToolContext with comprehensive error handling

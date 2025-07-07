@@ -284,13 +284,39 @@ impl ChatArgs {
         info!(?conversation_id, "Generated new conversation id");
         let (prompt_request_sender, prompt_request_receiver) = std::sync::mpsc::channel::<Option<String>>();
         let (prompt_response_sender, prompt_response_receiver) = std::sync::mpsc::channel::<Vec<String>>();
-        let mut tool_manager = ToolManagerBuilder::default()
-            .prompt_list_sender(prompt_response_sender)
-            .prompt_list_receiver(prompt_request_receiver)
-            .conversation_id(&conversation_id)
-            .agent(agents.get_active().cloned().unwrap_or_default())
-            .build(os, Box::new(std::io::stderr()), !self.no_interactive)
-            .await?;
+        
+        // Check if MCP auto-indexing is enabled to determine loading strategy
+        let mcp_auto_indexing_enabled = {
+            use crate::database::settings::{Setting, Settings};
+            match Settings::new().await {
+                Ok(settings) => settings.get_bool(Setting::McpAutoIndexingEnabled).unwrap_or(true),
+                Err(_) => true, // Default to enabled
+            }
+        };
+        
+        let mut tool_manager = if mcp_auto_indexing_enabled {
+            // When auto-indexing is enabled, don't load MCP servers traditionally
+            // Tools will be available through RAG-based discovery and on-demand loading
+            ToolManagerBuilder::default()
+                .mcp_server_config(tool_manager::McpServerConfig { mcp_servers: HashMap::new() }) // Empty MCP config - no traditional loading
+                .prompt_list_sender(prompt_response_sender)
+                .prompt_list_receiver(prompt_request_receiver)
+                .conversation_id(&conversation_id)
+                .agent(agents.get_active().cloned().unwrap_or_default())
+                .build(os, Box::new(std::io::stderr()), !self.non_interactive)
+                .await?
+        } else {
+            // Traditional MCP server loading when auto-indexing is disabled
+            ToolManagerBuilder::default()
+                .mcp_server_config(mcp_server_configs)
+                .prompt_list_sender(prompt_response_sender)
+                .prompt_list_receiver(prompt_request_receiver)
+                .conversation_id(&conversation_id)
+                .agent(agents.get_active().cloned().unwrap_or_default())
+                .build(os, Box::new(std::io::stderr()), !self.non_interactive)
+                .await?
+        };
+        
         let tool_config = tool_manager.load_tools(os, &mut stderr).await?;
 
         ChatSession::new(

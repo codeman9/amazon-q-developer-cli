@@ -25,6 +25,14 @@ name = "test_mcp_integration"
 path = "../../test_mcp_integration.rs"
 
 [[bin]]
+name = "debug_mcp_search"
+path = "../../debug_mcp_search.rs"
+
+[[bin]]
+name = "debug_contexts"
+path = "../../debug_contexts.rs"
+
+[[bin]]
 name = "simple_mcp_test"
 path = "../../simple_mcp_test.rs"
 test = true

@@ -351,6 +351,9 @@ impl KnowledgeStore {
     /// Check if we should refresh the MCP index based on interval
     async fn should_refresh_mcp_index(&self) -> bool {
         use crate::database::settings::{Setting, Settings};
+        use std::path::PathBuf;
+        use crate::os::Os;
+        use crate::util::directories;
         
         let _refresh_interval = match Settings::new().await {
             Ok(settings) => {
@@ -359,9 +362,43 @@ impl KnowledgeStore {
             Err(_) => 300 // Default 5 minutes
         };
 
-        // For now, always refresh on startup
-        // TODO: Implement timestamp-based checking for incremental updates
-        true
+        // Check for auto-indexing completion flag file to prevent multiple runs
+        let os = match Os::new().await {
+            Ok(os) => os,
+            Err(_) => return false, // Can't create Os instance, skip indexing
+        };
+        
+        // Get amazonq config directory (~/.aws/amazonq/)
+        let config_dir = match directories::home_dir(&os) {
+            Ok(home) => home.join(".aws").join("amazonq"),
+            Err(_) => return false, // Can't determine home dir, skip indexing
+        };
+        
+        let flag_file = config_dir.join("mcp_auto_indexed.flag");
+        
+        // If flag file exists, auto-indexing has already been done
+        if os.fs.exists(&flag_file) {
+            return false;
+        }
+
+        // Check if MCP tools have already been indexed by looking for existing MCP contexts
+        let contexts = self.client.get_contexts().await;
+        
+        // If we already have MCP contexts, don't auto-index again and create flag file
+        let has_mcp_contexts = contexts.iter().any(|ctx| {
+            ctx.name.starts_with("MCP Tools: ") || ctx.description.contains("MCP server")
+        });
+        
+        if has_mcp_contexts {
+            // Create config directory if it doesn't exist
+            let _ = os.fs.create_dir_all(&config_dir).await;
+            // Create flag file to prevent future auto-indexing
+            let _ = os.fs.write(&flag_file, "auto-indexed").await;
+            false
+        } else {
+            // No MCP contexts found and no flag file, proceed with indexing
+            true
+        }
     }
 
     /// Get the MCP indexing log level
@@ -379,12 +416,27 @@ impl KnowledgeStore {
 
     /// Perform background MCP indexing without blocking
     async fn background_index_mcp_tools(&mut self) -> Result<String, String> {
+        use std::path::PathBuf;
+        use crate::os::Os;
+        use crate::util::directories;
+        
         // Use existing refresh_mcp_tools but with better error handling and logging
         let start_time = std::time::Instant::now();
         
         match self.refresh_mcp_tools().await {
             Ok(message) => {
                 let duration = start_time.elapsed();
+                
+                // Create flag file to prevent future auto-indexing
+                if let Ok(os) = Os::new().await {
+                    if let Ok(home) = directories::home_dir(&os) {
+                        let config_dir = home.join(".aws").join("amazonq");
+                        let flag_file = config_dir.join("mcp_auto_indexed.flag");
+                        let _ = os.fs.create_dir_all(&config_dir).await;
+                        let _ = os.fs.write(&flag_file, "auto-indexed").await;
+                    }
+                }
+                
                 Ok(format!("{} (completed in {:.2}s)", message, duration.as_secs_f64()))
             }
             Err(e) => {
@@ -397,17 +449,36 @@ impl KnowledgeStore {
     /// Refresh MCP tools by discovering and indexing MCP servers from mcp.json
     pub async fn refresh_mcp_tools(&mut self) -> Result<String, String> {
         use crate::util::mcp_processor::{McpDiscoveryService, ToolSchemaProcessor};
+        use std::path::PathBuf;
+        use crate::os::Os;
+        use crate::util::directories;
+        
+        // Remove flag file to allow re-indexing (for manual refresh)
+        if let Ok(os) = Os::new().await {
+            if let Ok(home) = directories::home_dir(&os) {
+                let config_dir = home.join(".aws").join("amazonq");
+                let flag_file = config_dir.join("mcp_auto_indexed.flag");
+                if os.fs.exists(&flag_file) {
+                    let _ = os.fs.remove_file(&flag_file).await;
+                }
+            }
+        }
         
         // Create MCP discovery service
+        println!("🔧 DEBUG: Creating MCP discovery service");
         let discovery_service = match McpDiscoveryService::new().await {
             Ok(service) => service,
-            Err(e) => return Ok(format!("No MCP configuration found: {}", e))
+            Err(e) => {
+                return Ok(format!("No MCP configuration found: {}", e))
+            }
         };
 
-        // Discover MCP servers
-        let servers = match discovery_service.discover_servers().await {
+        // Discover MCP servers using quiet mode to avoid duplicate messages
+        let servers = match discovery_service.discover_servers_with_options(false).await {
             Ok(servers) => servers,
-            Err(e) => return Ok(format!("No MCP servers found: {}", e))
+            Err(e) => {
+                return Ok(format!("No MCP servers found: {}", e))
+            }
         };
 
         if servers.is_empty() {
@@ -417,7 +488,9 @@ impl KnowledgeStore {
         // Get tool schemas from servers
         let tool_schemas = match discovery_service.get_tool_schemas(&servers).await {
             Ok(schemas) => schemas,
-            Err(e) => return Err(format!("Failed to get tool schemas: {}", e))
+            Err(e) => {
+                return Err(format!("Failed to get tool schemas: {}", e))
+            }
         };
 
         // Process tool schemas into searchable contexts
@@ -428,9 +501,11 @@ impl KnowledgeStore {
 
         for (server, tools_result) in tool_schemas {
             println!("🔍 Processing tools for server: {}", server.name);
+            
             match processor.create_mcp_contexts(&server, &tools_result) {
                 Ok(contexts) => {
                     println!("📝 Created {} contexts for server: {}", contexts.len(), server.name);
+                    
                     if !contexts.is_empty() {
                         let context_name = format!("mcp_{}", server.name);
                         let context_description = format!("MCP tools from {} server", server.name);
@@ -512,16 +587,60 @@ impl KnowledgeStore {
 
         let mut mcp_tools = Vec::new();
 
+        // Get all contexts to map IDs to names
+        let all_contexts = self.get_all().await
+            .map_err(|e| format!("Failed to get contexts: {}", e))?;
+        
+        // Create a map of context ID to context name
+        let mut context_id_to_name = std::collections::HashMap::new();
+        for context in all_contexts {
+            context_id_to_name.insert(context.id.clone(), context.name.clone());
+        }
+
         // Extract MCP tool contexts from search results
-        for (context_name, results) in search_results {
-            if context_name.starts_with("mcp_") {
-                for result in results {
-                    // Try to extract MCP tool context from the result
-                    // This is a simplified approach - in a full implementation,
-                    // we would need to properly deserialize the MCP tool context
-                    if let Ok(tool_spec) = self.create_tool_spec_from_search_result(&result) {
-                        mcp_tools.push(tool_spec);
+        for (context_id, results) in search_results {
+            // Check if this context is an MCP context
+            if let Some(context_name) = context_id_to_name.get(&context_id) {
+                if context_name.starts_with("mcp_") {
+                    for result in results {
+                        // Try to extract MCP tool context from the result
+                        if let Ok(tool_spec) = self.create_tool_spec_from_search_result(&result) {
+                            mcp_tools.push(tool_spec);
+                        }
                     }
+                }
+            }
+        }
+
+        // If no results from search, try to get tools directly from MCP contexts
+        if mcp_tools.is_empty() {
+            // Fallback: Create tools from context metadata since search isn't working
+            let all_contexts = self.get_all().await
+                .map_err(|e| format!("Failed to get contexts: {}", e))?;
+            
+            for context in all_contexts {
+                if context.name.starts_with("mcp_") {
+                    // Extract server name from context name (remove "mcp_" prefix)
+                    let server_name = context.name.strip_prefix("mcp_").unwrap_or(&context.name);
+                    
+                    // Create a basic tool spec from context metadata
+                    let tool_spec = serde_json::json!({
+                        "name": format!("{}___search_tool", server_name),
+                        "description": format!("Search and access tools from {} server", server_name),
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "query": {
+                                    "type": "string",
+                                    "description": "Query to search for relevant tools"
+                                }
+                            },
+                            "required": ["query"]
+                        },
+                        "toolOrigin": "mcp"
+                    });
+                    
+                    mcp_tools.push(tool_spec);
                 }
             }
         }
@@ -536,16 +655,12 @@ impl KnowledgeStore {
 
     /// Get all available MCP tools as function definitions for LLM
     pub async fn get_all_mcp_tools_for_llm(&self) -> Result<Vec<serde_json::Value>, String> {
-        // Use a broad query to get all MCP tools instead of empty string
+        // Use a broad query to get all MCP tools
         self.search_mcp_tools_for_llm("tool", Some(50)).await
     }
 
     /// Create a tool spec from a search result (helper method)
     fn create_tool_spec_from_search_result(&self, result: &semantic_search_client::types::SearchResult) -> Result<serde_json::Value, String> {
-        // This is a simplified implementation
-        // In a full implementation, we would deserialize the actual MCP tool context
-        // For now, create a basic tool spec from the search result content
-        
         // Extract tool name from the data point payload
         let tool_name = result.point.payload
             .get("tool_name")
@@ -563,7 +678,7 @@ impl KnowledgeStore {
             .take(200)
             .collect::<String>();
         
-        Ok(serde_json::json!({
+        let tool_spec = serde_json::json!({
             "name": format!("mcp_{}", tool_name),
             "description": description,
             "inputSchema": {
@@ -572,7 +687,9 @@ impl KnowledgeStore {
                 "required": []
             },
             "toolOrigin": "mcp"
-        }))
+        });
+        
+        Ok(tool_spec)
     }
 
     /// Filter and rank MCP tools based on relevance to a query

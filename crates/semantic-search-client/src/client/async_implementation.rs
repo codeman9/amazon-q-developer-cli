@@ -246,33 +246,60 @@ impl AsyncSemanticSearchClient {
         let effective_limit = result_limit.unwrap_or(self.config.default_results);
         let query_vector = self.embedder.embed(query_text)?;
 
-        // Try to get volatile contexts with timeout
-        let volatile_contexts =
-            match tokio::time::timeout(std::time::Duration::from_millis(100), self.volatile_contexts.read()).await {
-                Ok(contexts_guard) => contexts_guard,
-                Err(_) => {
-                    if let Ok(contexts_guard) = self.volatile_contexts.try_read() {
-                        contexts_guard
-                    } else {
-                        // Can't search during heavy indexing
-                        return Ok(Vec::new());
-                    }
-                },
-            };
-
         let mut all_results = Vec::new();
 
-        for (context_id, context) in volatile_contexts.iter() {
-            if let Ok(context_guard) = context.try_lock() {
-                match context_guard.search(&query_vector, effective_limit) {
-                    Ok(results) => {
-                        if !results.is_empty() {
-                            all_results.push((context_id.clone(), results));
+        // Search volatile contexts
+        if let Ok(volatile_contexts) = self.volatile_contexts.try_read() {
+            for (context_id, context) in volatile_contexts.iter() {
+                if let Ok(context_guard) = context.try_lock() {
+                    match context_guard.search(&query_vector, effective_limit) {
+                        Ok(results) => {
+                            if !results.is_empty() {
+                                all_results.push((context_id.clone(), results));
+                            }
+                        },
+                        Err(e) => {
+                            tracing::warn!("Failed to search volatile context {}: {}", context_id, e);
+                        },
+                    }
+                }
+            }
+        }
+
+        // Also search persistent contexts by loading them temporarily
+        if let Ok(contexts_metadata) = self.contexts.try_read() {
+            for (context_id, context_meta) in contexts_metadata.iter() {
+                // Skip if this context is already in volatile contexts (avoid duplicates)
+                if let Ok(volatile_contexts) = self.volatile_contexts.try_read() {
+                    if volatile_contexts.contains_key(context_id) {
+                        continue;
+                    }
+                }
+
+                // Load persistent context temporarily for search
+                if context_meta.persistent {
+                    let context_dir = self.base_dir.join("contexts").join(context_id);
+                    let context_file = context_dir.join("data.json");
+                    
+                    if context_file.exists() {
+                        match SemanticContext::new(context_file) {
+                            Ok(persistent_context) => {
+                                match persistent_context.search(&query_vector, effective_limit) {
+                                    Ok(results) => {
+                                        if !results.is_empty() {
+                                            all_results.push((context_id.clone(), results));
+                                        }
+                                    },
+                                    Err(e) => {
+                                        tracing::warn!("Failed to search persistent context {}: {}", context_id, e);
+                                    },
+                                }
+                            },
+                            Err(e) => {
+                                tracing::warn!("Failed to load persistent context {}: {}", context_id, e);
+                            },
                         }
-                    },
-                    Err(e) => {
-                        tracing::warn!("Failed to search context {}: {}", context_id, e);
-                    },
+                    }
                 }
             }
         }
