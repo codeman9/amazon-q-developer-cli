@@ -668,6 +668,13 @@ impl KnowledgeStore {
             .unwrap_or("unknown_tool")
             .to_string();
             
+        // Extract server name from the data point payload
+        let server_name = result.point.payload
+            .get("server_name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown_server")
+            .to_string();
+            
         // Extract description from the data point payload or text content
         let description = result.point.payload
             .get("description")
@@ -679,7 +686,7 @@ impl KnowledgeStore {
             .collect::<String>();
         
         let tool_spec = serde_json::json!({
-            "name": format!("mcp_{}", tool_name),
+            "name": format!("{}___{}", server_name, tool_name),
             "description": description,
             "inputSchema": {
                 "type": "object",
