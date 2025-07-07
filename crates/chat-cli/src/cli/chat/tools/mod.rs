@@ -161,6 +161,7 @@ pub struct ToolSpec {
 pub enum ToolOrigin {
     Native,
     McpServer(String),
+    Mcp, // For MCP tools discovered through RAG
 }
 
 impl std::hash::Hash for ToolOrigin {
@@ -189,6 +190,8 @@ impl<'de> Deserialize<'de> for ToolOrigin {
         let s = String::deserialize(deserializer)?;
         if s == "native___" {
             Ok(ToolOrigin::Native)
+        } else if s == "mcp___" {
+            Ok(ToolOrigin::Mcp)
         } else {
             Ok(ToolOrigin::McpServer(s))
         }
@@ -203,6 +206,7 @@ impl Serialize for ToolOrigin {
         match self {
             ToolOrigin::Native => serializer.serialize_str("native___"),
             ToolOrigin::McpServer(server) => serializer.serialize_str(server),
+            ToolOrigin::Mcp => serializer.serialize_str("mcp___"),
         }
     }
 }
@@ -212,6 +216,7 @@ impl std::fmt::Display for ToolOrigin {
         match self {
             ToolOrigin::Native => write!(f, "Built-in"),
             ToolOrigin::McpServer(server) => write!(f, "{} (MCP)", server),
+            ToolOrigin::Mcp => write!(f, "MCP (RAG)"),
         }
     }
 }

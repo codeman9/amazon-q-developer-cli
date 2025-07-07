@@ -37,6 +37,7 @@ pub enum Setting {
     McpAutoIndexingEnabled,
     McpIndexRefreshInterval,
     McpIndexingLogLevel,
+    McpSelectiveLoadingEnabled,
 }
 
 impl AsRef<str> for Setting {
@@ -62,6 +63,7 @@ impl AsRef<str> for Setting {
             Self::McpAutoIndexingEnabled => "mcp.autoIndexing.enabled",
             Self::McpIndexRefreshInterval => "mcp.autoIndexing.refreshInterval",
             Self::McpIndexingLogLevel => "mcp.autoIndexing.logLevel",
+            Self::McpSelectiveLoadingEnabled => "mcp.selectiveLoading.enabled",
         }
     }
 }
@@ -97,6 +99,7 @@ impl TryFrom<&str> for Setting {
             "mcp.autoIndexing.enabled" => Ok(Self::McpAutoIndexingEnabled),
             "mcp.autoIndexing.refreshInterval" => Ok(Self::McpIndexRefreshInterval),
             "mcp.autoIndexing.logLevel" => Ok(Self::McpIndexingLogLevel),
+            "mcp.selectiveLoading.enabled" => Ok(Self::McpSelectiveLoadingEnabled),
             _ => Err(DatabaseError::InvalidSetting(value.to_string())),
         }
     }

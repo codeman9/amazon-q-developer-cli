@@ -5,6 +5,7 @@ use eyre::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use semantic_search_client::types::{McpServerConfig as SemanticMcpServerConfig, McpToolContext};
 use chrono::Utc;
+use tracing::{debug, info, warn, error, instrument};
 
 use crate::cli::chat::tool_manager::{McpServerConfig, global_mcp_config_path, workspace_mcp_config_path};
 use crate::mcp_client::{
@@ -14,6 +15,9 @@ use crate::mcp_client::{
     ToolsListResult,
 };
 use crate::os::Os;
+
+use super::mcp_error::{McpError, McpResult, RetryConfig};
+use super::mcp_retry::RetryExecutor;
 
 /// Information about a discovered MCP server
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -54,46 +58,91 @@ impl McpDiscoveryService {
     }
 
     /// Discover all enabled MCP servers from both workspace and global configurations
-    pub async fn discover_servers(&self) -> Result<Vec<McpServerInfo>> {
+    #[instrument(skip(self))]
+    pub async fn discover_servers(&self) -> McpResult<Vec<McpServerInfo>> {
+        info!("Starting MCP server discovery");
+        
         let mut servers = Vec::new();
         
         // Try workspace configuration first
-        if let Ok(workspace_servers) = self.discover_servers_from_scope("workspace").await {
-            servers.extend(workspace_servers);
+        match self.discover_servers_from_scope("workspace").await {
+            Ok(workspace_servers) => {
+                debug!("Found {} servers in workspace scope", workspace_servers.len());
+                servers.extend(workspace_servers);
+            }
+            Err(e) => {
+                warn!("Failed to discover workspace MCP servers: {}", e);
+            }
         }
         
         // Then try global configuration
-        if let Ok(global_servers) = self.discover_servers_from_scope("global").await {
-            servers.extend(global_servers);
+        match self.discover_servers_from_scope("global").await {
+            Ok(global_servers) => {
+                debug!("Found {} servers in global scope", global_servers.len());
+                servers.extend(global_servers);
+            }
+            Err(e) => {
+                warn!("Failed to discover global MCP servers: {}", e);
+            }
         }
         
         // Filter out disabled servers
+        let initial_count = servers.len();
         servers.retain(|server| !server.disabled);
+        let enabled_count = servers.len();
+        
+        if initial_count > enabled_count {
+            debug!("Filtered out {} disabled servers", initial_count - enabled_count);
+        }
+        
+        if servers.is_empty() {
+            info!("No enabled MCP servers found in any configuration");
+        } else {
+            info!("Discovered {} enabled MCP servers", servers.len());
+        }
         
         Ok(servers)
     }
 
-    /// Get tool schemas from MCP servers
-    pub async fn get_tool_schemas(&self, servers: &[McpServerInfo]) -> Result<Vec<(McpServerInfo, ToolsListResult)>> {
+    /// Get tool schemas from MCP servers with retry logic
+    #[instrument(skip(self, servers))]
+    pub async fn get_tool_schemas(&self, servers: &[McpServerInfo]) -> McpResult<Vec<(McpServerInfo, ToolsListResult)>> {
+        info!("Retrieving tool schemas from {} servers", servers.len());
+        
         let mut results = Vec::new();
+        let mut retry_executor = RetryExecutor::new(RetryConfig::default());
         
         for server in servers {
-            match self.get_server_tool_schemas(server).await {
+            debug!("Getting tool schemas from server: {}", server.name);
+            
+            match retry_executor.execute_for_server(&server.name, "get_tool_schemas", || {
+                self.get_server_tool_schemas_with_error_handling(server)
+            }).await {
                 Ok(tools_result) => {
+                    info!("Successfully retrieved {} tools from server '{}'", 
+                          tools_result.tools.len(), server.name);
                     results.push((server.clone(), tools_result));
-                },
+                }
                 Err(e) => {
-                    tracing::warn!("Failed to get tool schemas from server {}: {:?}", server.name, e);
+                    error!("Failed to get tool schemas from server '{}': {}", server.name, e);
                     // Continue with other servers even if one fails
                 }
             }
         }
         
+        info!("Successfully retrieved tool schemas from {}/{} servers", results.len(), servers.len());
         Ok(results)
     }
 
-    /// Get tool schemas from a single MCP server
-    async fn get_server_tool_schemas(&self, server: &McpServerInfo) -> Result<ToolsListResult> {
+    /// Get tool schemas from a single MCP server with proper error handling
+    async fn get_server_tool_schemas_with_error_handling(&self, server: &McpServerInfo) -> McpResult<ToolsListResult> {
+        // First validate the server configuration
+        self.validate_server_config(server)
+            .map_err(|e| McpError::MalformedServerConfig {
+                server_name: server.name.clone(),
+                details: e.to_string(),
+            })?;
+
         let client_config = McpClientConfig {
             server_name: server.name.clone(),
             bin_path: server.command.clone(),
@@ -106,32 +155,57 @@ impl McpDiscoveryService {
             env: server.env.clone(),
         };
 
+        debug!("Connecting to MCP server '{}' with command: {}", server.name, server.command);
+        
         let client = McpClient::<JsonRpcStdioTransport>::from_config(client_config)
-            .with_context(|| format!("Failed to create MCP client for server {}", server.name))?;
+            .map_err(|e| McpError::connection_failed(&server.name, format!("Failed to create client: {}", e)))?;
 
         // Request the tools list
         let response = client.request("tools/list", None).await
-            .with_context(|| format!("Failed to request tools list from server {}", server.name))?;
+            .map_err(|e| McpError::connection_failed(&server.name, format!("Failed to request tools list: {}", e)))?;
 
         if let Some(error) = response.error {
-            bail!("MCP server {} returned error: {:?}", server.name, error);
+            return Err(McpError::ServerError {
+                server_name: server.name.clone(),
+                error_message: format!("Server returned error: {:?}", error),
+            });
         }
 
         let Some(result) = response.result else {
-            bail!("MCP server {} returned empty result", server.name);
+            return Err(McpError::ServerError {
+                server_name: server.name.clone(),
+                error_message: "Server returned empty result".to_string(),
+            });
         };
 
         let tools_result = serde_json::from_value::<ToolsListResult>(result)
-            .with_context(|| format!("Failed to deserialize tools list from server {}", server.name))?;
+            .map_err(|e| McpError::SchemaParseFailed {
+                server_name: server.name.clone(),
+                details: format!("Failed to deserialize tools list: {}", e),
+            })?;
 
+        debug!("Retrieved {} tools from server '{}'", tools_result.tools.len(), server.name);
         Ok(tools_result)
     }
 
     /// Validate server health by attempting to connect and get basic info
-    pub async fn validate_server_health(&self, server: &McpServerInfo) -> Result<bool> {
-        match self.get_server_tool_schemas(server).await {
-            Ok(_) => Ok(true),
-            Err(_) => Ok(false),
+    #[instrument(skip(self, server))]
+    pub async fn validate_server_health(&self, server: &McpServerInfo) -> McpResult<bool> {
+        debug!("Validating health of server: {}", server.name);
+        
+        let mut retry_executor = RetryExecutor::new(RetryConfig::new(2)); // Fewer retries for health checks
+        
+        match retry_executor.execute_for_server(&server.name, "health_check", || {
+            self.get_server_tool_schemas_with_error_handling(server)
+        }).await {
+            Ok(_) => {
+                debug!("Server '{}' is healthy", server.name);
+                Ok(true)
+            }
+            Err(e) => {
+                warn!("Server '{}' health check failed: {}", server.name, e);
+                Ok(false)
+            }
         }
     }
 
@@ -223,28 +297,76 @@ impl ToolSchemaProcessor {
         Self
     }
 
-    /// Extract searchable content from tool schemas
+    /// Extract searchable content from tool schemas with error handling
+    #[instrument(skip(self, server, tools_result))]
     pub fn extract_searchable_content(&self, server: &McpServerInfo, tools_result: &ToolsListResult) -> Vec<String> {
-        let mut searchable_content = Vec::new();
+        debug!("Extracting searchable content from {} tools for server '{}'", 
+               tools_result.tools.len(), server.name);
         
-        for tool in &tools_result.tools {
-            if let Some(content) = self.tool_to_searchable_text(server, tool) {
-                searchable_content.push(content);
+        let mut searchable_content = Vec::new();
+        let mut failed_count = 0;
+        
+        for (index, tool) in tools_result.tools.iter().enumerate() {
+            match self.tool_to_searchable_text(server, tool) {
+                Some(content) => {
+                    searchable_content.push(content);
+                }
+                None => {
+                    failed_count += 1;
+                    warn!("Failed to extract searchable content from tool {} (index {}) in server '{}'", 
+                          tool.get("name").and_then(|n| n.as_str()).unwrap_or("unknown"), 
+                          index, server.name);
+                }
             }
+        }
+        
+        if failed_count > 0 {
+            warn!("Failed to process {} out of {} tools from server '{}'", 
+                  failed_count, tools_result.tools.len(), server.name);
+        } else {
+            debug!("Successfully processed all {} tools from server '{}'", 
+                   tools_result.tools.len(), server.name);
         }
         
         searchable_content
     }
 
-    /// Create MCP contexts from tool schemas
-    pub fn create_mcp_contexts(&self, server: &McpServerInfo, tools_result: &ToolsListResult) -> Result<Vec<McpToolContext>> {
-        let mut contexts = Vec::new();
+    /// Create MCP contexts from tool schemas with comprehensive error handling
+    #[instrument(skip(self, server, tools_result))]
+    pub fn create_mcp_contexts(&self, server: &McpServerInfo, tools_result: &ToolsListResult) -> McpResult<Vec<McpToolContext>> {
+        debug!("Creating MCP contexts from {} tools for server '{}'", 
+               tools_result.tools.len(), server.name);
         
-        for tool in &tools_result.tools {
-            if let Some(context) = self.tool_to_mcp_context(server, tool)? {
-                contexts.push(context);
+        let mut contexts = Vec::new();
+        let mut failed_tools = Vec::new();
+        
+        for (index, tool) in tools_result.tools.iter().enumerate() {
+            match self.tool_to_mcp_context(server, tool) {
+                Ok(Some(context)) => {
+                    contexts.push(context);
+                }
+                Ok(None) => {
+                    let tool_name = tool.get("name").and_then(|n| n.as_str()).unwrap_or("unknown");
+                    warn!("Skipped tool '{}' (index {}) from server '{}' - insufficient data", 
+                          tool_name, index, server.name);
+                    failed_tools.push(tool_name.to_string());
+                }
+                Err(e) => {
+                    let tool_name = tool.get("name").and_then(|n| n.as_str()).unwrap_or("unknown");
+                    error!("Failed to process tool '{}' (index {}) from server '{}': {}", 
+                           tool_name, index, server.name, e);
+                    failed_tools.push(tool_name.to_string());
+                }
             }
         }
+        
+        if !failed_tools.is_empty() {
+            warn!("Failed to process {} tools from server '{}': {:?}", 
+                  failed_tools.len(), server.name, failed_tools);
+        }
+        
+        info!("Successfully created {} MCP contexts from server '{}' ({} failed)", 
+              contexts.len(), server.name, failed_tools.len());
         
         Ok(contexts)
     }
@@ -270,20 +392,43 @@ impl ToolSchemaProcessor {
         ))
     }
 
-    /// Convert a single tool JSON to McpToolContext
-    fn tool_to_mcp_context(&self, server: &McpServerInfo, tool: &serde_json::Value) -> Result<Option<McpToolContext>> {
+    /// Convert a single tool JSON to McpToolContext with comprehensive error handling
+    fn tool_to_mcp_context(&self, server: &McpServerInfo, tool: &serde_json::Value) -> McpResult<Option<McpToolContext>> {
         let Some(tool_name) = tool.get("name").and_then(|n| n.as_str()) else {
+            debug!("Tool missing name field, skipping");
             return Ok(None);
         };
+
+        // Validate required fields
+        if tool_name.is_empty() {
+            return Err(McpError::InvalidToolSchema {
+                server_name: server.name.clone(),
+                tool_name: "empty".to_string(),
+                reason: "Tool name cannot be empty".to_string(),
+            });
+        }
 
         let description = tool.get("description")
             .and_then(|d| d.as_str())
             .unwrap_or("")
             .to_string();
 
-        let parameters = self.extract_tool_parameters(tool);
+        // Extract parameters with error handling
+        let parameters = match self.extract_tool_parameters_safe(server, tool_name, tool) {
+            Ok(params) => params,
+            Err(e) => {
+                warn!("Failed to extract parameters for tool '{}' from server '{}': {}", 
+                      tool_name, server.name, e);
+                Vec::new() // Continue with empty parameters rather than failing
+            }
+        };
+
         let indexed_content = self.tool_to_searchable_text(server, tool)
-            .unwrap_or_default();
+            .unwrap_or_else(|| {
+                warn!("Failed to generate searchable content for tool '{}' from server '{}'", 
+                      tool_name, server.name);
+                format!("Tool: {} from {} server", tool_name, server.name)
+            });
 
         let context = McpToolContext {
             id: format!("{}_{}", server.name, tool_name),
@@ -296,7 +441,69 @@ impl ToolSchemaProcessor {
             last_updated: Utc::now(),
         };
 
+        debug!("Successfully created MCP context for tool '{}' from server '{}'", 
+               tool_name, server.name);
         Ok(Some(context))
+    }
+
+    /// Extract tool parameters with comprehensive error handling
+    fn extract_tool_parameters_safe(&self, server: &McpServerInfo, tool_name: &str, tool: &serde_json::Value) -> McpResult<Vec<semantic_search_client::types::ToolParameter>> {
+        let Some(input_schema) = tool.get("inputSchema") else {
+            debug!("Tool '{}' has no inputSchema", tool_name);
+            return Ok(Vec::new());
+        };
+
+        let Some(properties) = input_schema.get("properties") else {
+            debug!("Tool '{}' inputSchema has no properties", tool_name);
+            return Ok(Vec::new());
+        };
+
+        let Some(properties_obj) = properties.as_object() else {
+            return Err(McpError::InvalidToolSchema {
+                server_name: server.name.clone(),
+                tool_name: tool_name.to_string(),
+                reason: "inputSchema.properties is not an object".to_string(),
+            });
+        };
+
+        let required_fields: std::collections::HashSet<String> = input_schema
+            .get("required")
+            .and_then(|r| r.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str())
+                    .map(|s| s.to_string())
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let mut parameters = Vec::new();
+
+        for (param_name, param_def) in properties_obj {
+            let param_type = param_def
+                .get("type")
+                .and_then(|t| t.as_str())
+                .unwrap_or("string")
+                .to_string();
+
+            let description = param_def
+                .get("description")
+                .and_then(|d| d.as_str())
+                .map(|s| s.to_string());
+
+            let required = required_fields.contains(param_name);
+
+            parameters.push(semantic_search_client::types::ToolParameter {
+                name: param_name.clone(),
+                param_type,
+                description,
+                required,
+            });
+        }
+
+        debug!("Extracted {} parameters for tool '{}' from server '{}'", 
+               parameters.len(), tool_name, server.name);
+        Ok(parameters)
     }
 
     /// Extract parameters text for searchable content
@@ -347,6 +554,8 @@ impl ToolSchemaProcessor {
     }
 
     /// Extract structured tool parameters
+    /// Extract tool parameters from a tool schema (for future use)
+    #[allow(dead_code)]
     fn extract_tool_parameters(&self, tool: &serde_json::Value) -> Vec<semantic_search_client::types::ToolParameter> {
         let Some(input_schema) = tool.get("inputSchema") else {
             return Vec::new();

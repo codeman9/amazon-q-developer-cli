@@ -9,6 +9,7 @@ pub mod model;
 pub mod persist;
 pub mod profile;
 pub mod prompts;
+pub mod selective_loading;
 pub mod subscribe;
 pub mod tools;
 pub mod usage;
@@ -25,6 +26,7 @@ use model::ModelArgs;
 use persist::PersistSubcommand;
 use profile::AgentSubcommand;
 use prompts::PromptsArgs;
+use selective_loading::SelectiveLoadingSubcommand;
 use tools::ToolsArgs;
 
 use crate::cli::chat::cli::subscribe::SubscribeArgs;
@@ -78,6 +80,9 @@ pub enum SlashCommand {
     Model(ModelArgs),
     /// Upgrade to a Q Developer Pro subscription for increased query limits
     Subscribe(SubscribeArgs),
+    /// Manage selective MCP server loading
+    #[command(name = "selective-loading", subcommand)]
+    SelectiveLoading(SelectiveLoadingSubcommand),
     #[command(flatten)]
     Persist(PersistSubcommand),
     // #[command(flatten)]
@@ -110,6 +115,7 @@ impl SlashCommand {
             Self::Mcp(args) => args.execute(session).await,
             Self::Model(args) => args.execute(session).await,
             Self::Subscribe(args) => args.execute(os, session).await,
+            Self::SelectiveLoading(subcommand) => subcommand.execute(os, session).await.map_err(|e| ChatError::Custom(e.to_string().into())),
             Self::Persist(subcommand) => subcommand.execute(os, session).await,
             // Self::Root(subcommand) => {
             //     if let Err(err) = subcommand.execute(os, database, telemetry).await {

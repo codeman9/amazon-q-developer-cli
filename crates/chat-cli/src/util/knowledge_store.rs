@@ -53,6 +53,14 @@ pub struct KnowledgeStore {
     client: AsyncSemanticSearchClient,
 }
 
+impl std::fmt::Debug for KnowledgeStore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("KnowledgeStore")
+            .field("client", &"AsyncSemanticSearchClient")
+            .finish()
+    }
+}
+
 impl KnowledgeStore {
     /// Get singleton instance
     pub async fn get_async_instance() -> Arc<Mutex<Self>> {
@@ -379,8 +387,200 @@ impl KnowledgeStore {
 
     /// Refresh MCP tools by discovering and indexing MCP servers from mcp.json
     pub async fn refresh_mcp_tools(&mut self) -> Result<String, String> {
-        // This is a placeholder - the actual implementation will be added in the next step
-        Ok("No MCP configuration found or no servers to index".to_string())
+        use crate::util::mcp_processor::{McpDiscoveryService, ToolSchemaProcessor};
+        
+        // Create MCP discovery service
+        let discovery_service = match McpDiscoveryService::new().await {
+            Ok(service) => service,
+            Err(e) => return Ok(format!("No MCP configuration found: {}", e))
+        };
+
+        // Discover MCP servers
+        let servers = match discovery_service.discover_servers().await {
+            Ok(servers) => servers,
+            Err(e) => return Ok(format!("No MCP servers found: {}", e))
+        };
+
+        if servers.is_empty() {
+            return Ok("No MCP servers to index".to_string());
+        }
+
+        // Get tool schemas from servers
+        let tool_schemas = match discovery_service.get_tool_schemas(&servers).await {
+            Ok(schemas) => schemas,
+            Err(e) => return Err(format!("Failed to get tool schemas: {}", e))
+        };
+
+        // Process tool schemas into searchable contexts
+        let processor = ToolSchemaProcessor::new();
+        let mut total_tools = 0;
+        let mut indexed_servers = 0;
+
+        for (server, tools_result) in tool_schemas {
+            match processor.create_mcp_contexts(&server, &tools_result) {
+                Ok(contexts) => {
+                    if !contexts.is_empty() {
+                        // Add contexts to semantic search client
+                        let context_name = format!("mcp_{}", server.name);
+                        let context_description = format!("MCP tools from {} server", server.name);
+                        
+                        match self.client.add_mcp_contexts(
+                            contexts.clone(),
+                            &context_name,
+                            &context_description,
+                            true // Make persistent
+                        ).await {
+                            Ok(_) => {
+                                total_tools += contexts.len();
+                                indexed_servers += 1;
+                            }
+                            Err(e) => {
+                                eprintln!("Warning: Failed to index tools from {}: {}", server.name, e);
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Warning: Failed to process tools from {}: {}", server.name, e);
+                }
+            }
+        }
+
+        if indexed_servers == 0 {
+            Ok("No MCP tools could be indexed".to_string())
+        } else {
+            Ok(format!("Indexed {} tools from {} MCP servers", total_tools, indexed_servers))
+        }
+    }
+
+    /// Search for relevant MCP tools based on a query for LLM function calling
+    pub async fn search_mcp_tools_for_llm(&self, query: &str, limit: Option<usize>) -> Result<Vec<serde_json::Value>, String> {
+        // Search for MCP tool contexts using semantic search
+        let search_results = self.client
+            .search_all(query, limit)
+            .await
+            .map_err(|e| format!("Failed to search MCP tools: {}", e))?;
+
+        let mut mcp_tools = Vec::new();
+
+        // Extract MCP tool contexts from search results
+        for (context_name, results) in search_results {
+            if context_name.starts_with("mcp_") {
+                for result in results {
+                    // Try to extract MCP tool context from the result
+                    // This is a simplified approach - in a full implementation,
+                    // we would need to properly deserialize the MCP tool context
+                    if let Ok(tool_spec) = self.create_tool_spec_from_search_result(&result) {
+                        mcp_tools.push(tool_spec);
+                    }
+                }
+            }
+        }
+
+        // Limit results if specified
+        if let Some(limit) = limit {
+            mcp_tools.truncate(limit);
+        }
+
+        Ok(mcp_tools)
+    }
+
+    /// Get all available MCP tools as function definitions for LLM
+    pub async fn get_all_mcp_tools_for_llm(&self) -> Result<Vec<serde_json::Value>, String> {
+        // Use a broad query to get all MCP tools instead of empty string
+        self.search_mcp_tools_for_llm("tool", Some(50)).await
+    }
+
+    /// Create a tool spec from a search result (helper method)
+    fn create_tool_spec_from_search_result(&self, result: &semantic_search_client::types::SearchResult) -> Result<serde_json::Value, String> {
+        // This is a simplified implementation
+        // In a full implementation, we would deserialize the actual MCP tool context
+        // For now, create a basic tool spec from the search result content
+        
+        // Extract tool name from the data point payload
+        let tool_name = result.point.payload
+            .get("tool_name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown_tool")
+            .to_string();
+            
+        // Extract description from the data point payload or text content
+        let description = result.point.payload
+            .get("description")
+            .and_then(|v| v.as_str())
+            .or_else(|| result.text())
+            .unwrap_or("MCP tool")
+            .chars()
+            .take(200)
+            .collect::<String>();
+        
+        Ok(serde_json::json!({
+            "name": format!("mcp_{}", tool_name),
+            "description": description,
+            "inputSchema": {
+                "type": "object",
+                "properties": {},
+                "required": []
+            },
+            "toolOrigin": "mcp"
+        }))
+    }
+
+    /// Filter and rank MCP tools based on relevance to a query
+    pub async fn get_relevant_mcp_tools(&self, query: &str, max_tools: usize) -> Result<Vec<serde_json::Value>, String> {
+        let tools = self.search_mcp_tools_for_llm(query, Some(max_tools * 2)).await?;
+        
+        // Filter and rank tools based on relevance
+        let mut relevant_tools: Vec<_> = tools
+            .into_iter()
+            .filter(|tool| {
+                if let Some(name) = tool.get("name").and_then(|n| n.as_str()) {
+                    if let Some(desc) = tool.get("description").and_then(|d| d.as_str()) {
+                        let query_lower = query.to_lowercase();
+                        name.to_lowercase().contains(&query_lower) || 
+                        desc.to_lowercase().contains(&query_lower)
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                }
+            })
+            .collect();
+
+        // Sort by relevance (simple string matching for now)
+        relevant_tools.sort_by(|a, b| {
+            let a_score = self.calculate_relevance_score(a, query);
+            let b_score = self.calculate_relevance_score(b, query);
+            b_score.partial_cmp(&a_score).unwrap_or(std::cmp::Ordering::Equal)
+        });
+
+        // Limit to max_tools
+        relevant_tools.truncate(max_tools);
+        
+        Ok(relevant_tools)
+    }
+
+    /// Calculate relevance score for a tool based on query
+    fn calculate_relevance_score(&self, tool: &serde_json::Value, query: &str) -> f32 {
+        let query_lower = query.to_lowercase();
+        let mut score = 0.0;
+
+        // Score based on name match
+        if let Some(name) = tool.get("name").and_then(|n| n.as_str()) {
+            if name.to_lowercase().contains(&query_lower) {
+                score += 2.0;
+            }
+        }
+
+        // Score based on description match
+        if let Some(desc) = tool.get("description").and_then(|d| d.as_str()) {
+            if desc.to_lowercase().contains(&query_lower) {
+                score += 1.0;
+            }
+        }
+
+        score
     }
 }
 

@@ -85,6 +85,7 @@ use crate::cli::chat::tools::{
     ToolSpec,
 };
 use crate::database::settings::Setting;
+use crate::util::selective_mcp_loader::SelectiveMcpLoader;
 use crate::mcp_client::{
     JsonRpcResponse,
     Messenger,
@@ -188,6 +189,37 @@ impl ToolManagerBuilder {
         debug_assert!(self.conversation_id.is_some());
         let conversation_id = self.conversation_id.ok_or(eyre::eyre!("Missing conversation id"))?;
 
+        // Check if selective loading is enabled
+        let selective_loading_enabled = {
+            use crate::database::settings::{Setting, Settings};
+            match Settings::new().await {
+                Ok(settings) => settings.get_bool(Setting::McpSelectiveLoadingEnabled).unwrap_or(false),
+                Err(_) => false,
+            }
+        };
+
+        // Initialize selective loader if enabled
+        let selective_loader = if selective_loading_enabled {
+            match SelectiveMcpLoader::new().await {
+                Ok(loader) => {
+                    if interactive {
+                        let stats = loader.get_server_stats().await;
+                        writeln!(output, "🔧 Selective MCP Loading: {} servers available, loading on-demand", stats.total_available)?;
+                    }
+                    Some(Arc::new(RwLock::new(loader)))
+                }
+                Err(e) => {
+                    if interactive {
+                        writeln!(output, "⚠️  Selective MCP Loading failed to initialize: {}", e)?;
+                        writeln!(output, "   Falling back to traditional loading...")?;
+                    }
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
         // Separate enabled and disabled servers
         let (enabled_servers, disabled_servers): (Vec<_>, Vec<_>) = mcp_servers
             .into_iter()
@@ -199,23 +231,35 @@ impl ToolManagerBuilder {
             .map(|(server_name, _)| server_name.clone())
             .collect();
 
-        let pre_initialized = enabled_servers
-            .into_iter()
-            .filter_map(|(server_name, server_config)| {
-                if server_name.contains(MCP_SERVER_TOOL_DELIMITER) {
-                    let _ = queue!(
-                        output,
-                        style::Print(format!(
-                            "Invalid server name {server_name}. Server name cannot contain {MCP_SERVER_TOOL_DELIMITER}\n"
-                        ))
-                    );
-                    None
-                } else {
-                    let custom_tool_client = CustomToolClient::from_config(server_name.clone(), server_config);
-                    Some((server_name, custom_tool_client))
+        // If selective loading is enabled, don't load servers automatically
+        let pre_initialized = if selective_loading_enabled {
+            // Show disabled servers but don't load any enabled servers
+            if interactive && !disabled_servers_display.is_empty() {
+                for server_name in &disabled_servers_display {
+                    writeln!(output, "○ {} is disabled", server_name)?;
                 }
-            })
-            .collect::<Vec<(String, _)>>();
+            }
+            Vec::new() // Empty - no servers loaded automatically
+        } else {
+            // Traditional behavior - load all enabled servers
+            enabled_servers
+                .into_iter()
+                .filter_map(|(server_name, server_config)| {
+                    if server_name.contains(MCP_SERVER_TOOL_DELIMITER) {
+                        let _ = queue!(
+                            output,
+                            style::Print(format!(
+                                "Invalid server name {server_name}. Server name cannot contain {MCP_SERVER_TOOL_DELIMITER}\n"
+                            ))
+                        );
+                        None
+                    } else {
+                        let custom_tool_client = CustomToolClient::from_config(server_name.clone(), server_config);
+                        Some((server_name, custom_tool_client))
+                    }
+                })
+                .collect::<Vec<(String, _)>>()
+        };
 
         let mut loading_servers = HashMap::<String, Instant>::new();
         for (server_name, _) in &pre_initialized {
@@ -701,6 +745,7 @@ impl ToolManagerBuilder {
             mcp_load_record: load_record,
             agent,
             disabled_servers: disabled_servers_display,
+            selective_loader,
             ..Default::default()
         })
     }
@@ -832,9 +877,14 @@ pub struct ToolManager {
     /// List of disabled MCP server names for display purposes
     disabled_servers: Vec<String>,
 
+<<<<<<< HEAD
     /// A collection of preferences that pertains to the conversation.
     /// As far as tool manager goes, this is relevant for tool and server filters
     pub agent: Arc<Mutex<Agent>>,
+=======
+    /// Selective MCP loader for on-demand server loading (when enabled)
+    selective_loader: Option<Arc<RwLock<SelectiveMcpLoader>>>,
+>>>>>>> 525c197a (feat(mcp): integrate selective loading system into main chat)
 }
 
 impl Clone for ToolManager {
@@ -850,12 +900,68 @@ impl Clone for ToolManager {
             is_interactive: self.is_interactive,
             mcp_load_record: self.mcp_load_record.clone(),
             disabled_servers: self.disabled_servers.clone(),
+            selective_loader: self.selective_loader.clone(),
             ..Default::default()
         }
     }
 }
 
 impl ToolManager {
+    /// Load MCP servers based on a query (selective loading)
+    pub async fn load_servers_for_query(&mut self, query: &str) -> eyre::Result<Vec<String>> {
+        if let Some(selective_loader) = &self.selective_loader {
+            let loader = selective_loader.read().await;
+            let server_names = loader.get_servers_for_query(query, Some(5)).await?;
+            
+            if !server_names.is_empty() {
+                let loaded_servers = loader.load_servers(&server_names).await?;
+                
+                // Add loaded servers to our clients map
+                for (name, client) in loaded_servers {
+                    self.clients.insert(name, client);
+                }
+                
+                tracing::info!("🔧 Loaded {} MCP servers for query: {:?}", server_names.len(), server_names);
+            }
+            
+            Ok(server_names)
+        } else {
+            Ok(Vec::new()) // Selective loading not enabled
+        }
+    }
+
+    /// Check if selective loading is enabled
+    pub fn is_selective_loading_enabled(&self) -> bool {
+        self.selective_loader.is_some()
+    }
+
+    /// Get selective loading statistics
+    pub async fn get_selective_loading_stats(&self) -> Option<crate::util::selective_mcp_loader::ServerStats> {
+        if let Some(selective_loader) = &self.selective_loader {
+            let loader = selective_loader.read().await;
+            Some(loader.get_server_stats().await)
+        } else {
+            None
+        }
+    }
+
+    /// Smart preload common servers (selective loading)
+    pub async fn smart_preload_servers(&mut self) -> eyre::Result<()> {
+        if let Some(selective_loader) = &self.selective_loader {
+            let loader = selective_loader.read().await;
+            let common_servers = vec!["git".to_string(), "fetch".to_string()];
+            let loaded_servers = loader.load_servers(&common_servers).await?;
+            
+            // Add loaded servers to our clients map
+            for (name, client) in loaded_servers {
+                self.clients.insert(name, client);
+            }
+            
+            tracing::info!("🔧 Preloaded {} common MCP servers", common_servers.len());
+        }
+        Ok(())
+    }
+
     pub async fn load_tools(
         &mut self,
         os: &mut Os,
@@ -907,7 +1013,16 @@ impl ToolManager {
                 });
             }
 
-            tool_specs
+            // Integrate MCP tools from RAG system
+            match crate::util::mcp_tool_integration::integrate_mcp_tools_into_config(tool_specs).await {
+                Ok(integrated_specs) => integrated_specs,
+                Err(e) => {
+                    // Log error but continue with existing tools
+                    eprintln!("Warning: Failed to integrate MCP tools: {}", e);
+                    // Return empty HashMap since tool_specs was moved
+                    HashMap::new()
+                }
+            }
         };
         let load_tools = self
             .clients

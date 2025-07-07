@@ -91,6 +91,9 @@ impl ToolsArgs {
             (ToolOrigin::Native, _) => std::cmp::Ordering::Less,
             (_, ToolOrigin::Native) => std::cmp::Ordering::Greater,
             (ToolOrigin::McpServer(name_a), ToolOrigin::McpServer(name_b)) => name_a.cmp(name_b),
+            (ToolOrigin::Mcp, ToolOrigin::Mcp) => std::cmp::Ordering::Equal,
+            (ToolOrigin::Mcp, ToolOrigin::McpServer(_)) => std::cmp::Ordering::Less,
+            (ToolOrigin::McpServer(_), ToolOrigin::Mcp) => std::cmp::Ordering::Greater,
         });
 
         for (origin, tools) in origin_tools.iter() {

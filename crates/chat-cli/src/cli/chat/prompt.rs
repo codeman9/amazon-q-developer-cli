@@ -82,6 +82,12 @@ pub const COMMANDS: &[&str] = &[
     "/save",
     "/load",
     "/subscribe",
+    "/selective-loading",
+    "/selective-loading status",
+    "/selective-loading enable",
+    "/selective-loading disable",
+    "/selective-loading toggle",
+    "/selective-loading help",
 ];
 
 /// Complete commands that start with a slash

@@ -342,6 +342,121 @@ impl McpToolContext {
             last_updated: Utc::now(),
         }
     }
+
+    /// Convert MCP tool context to a function definition for LLM integration
+    pub fn to_function_definition(&self) -> serde_json::Value {
+        let mut properties = serde_json::Map::new();
+        let mut required = Vec::new();
+
+        // Convert tool parameters to JSON schema properties
+        for param in &self.parameters {
+            let mut param_schema = serde_json::Map::new();
+            
+            // Set parameter type
+            param_schema.insert("type".to_string(), serde_json::Value::String(param.param_type.clone()));
+            
+            // Add description if available
+            if let Some(description) = &param.description {
+                param_schema.insert("description".to_string(), serde_json::Value::String(description.clone()));
+            }
+            
+            properties.insert(param.name.clone(), serde_json::Value::Object(param_schema));
+            
+            // Add to required array if parameter is required
+            if param.required {
+                required.push(serde_json::Value::String(param.name.clone()));
+            }
+        }
+
+        // Create the function definition
+        serde_json::json!({
+            "name": format!("{}_{}", self.server_name, self.tool_name),
+            "description": self.description,
+            "input_schema": {
+                "type": "object",
+                "properties": properties,
+                "required": required
+            }
+        })
+    }
+
+    /// Convert MCP tool context to ToolSpec for integration with existing tool system
+    pub fn to_tool_spec(&self) -> serde_json::Value {
+        let mut properties = serde_json::Map::new();
+        let mut required = Vec::new();
+
+        // Convert tool parameters to JSON schema properties
+        for param in &self.parameters {
+            let mut param_schema = serde_json::Map::new();
+            
+            // Set parameter type
+            param_schema.insert("type".to_string(), serde_json::Value::String(param.param_type.clone()));
+            
+            // Add description if available
+            if let Some(description) = &param.description {
+                param_schema.insert("description".to_string(), serde_json::Value::String(description.clone()));
+            }
+            
+            properties.insert(param.name.clone(), serde_json::Value::Object(param_schema));
+            
+            // Add to required array if parameter is required
+            if param.required {
+                required.push(serde_json::Value::String(param.name.clone()));
+            }
+        }
+
+        // Create the ToolSpec-compatible structure
+        serde_json::json!({
+            "name": format!("{}_{}", self.server_name, self.tool_name),
+            "description": self.description,
+            "inputSchema": {
+                "type": "object",
+                "properties": properties,
+                "required": required
+            },
+            "toolOrigin": "mcp"
+        })
+    }
+
+    /// Get the full tool name for LLM function calling
+    pub fn get_function_name(&self) -> String {
+        format!("{}_{}", self.server_name, self.tool_name)
+    }
+
+    /// Check if this tool matches a given query semantically
+    pub fn matches_query(&self, query: &str) -> bool {
+        let query_lower = query.to_lowercase();
+        
+        // Check tool name
+        if self.tool_name.to_lowercase().contains(&query_lower) {
+            return true;
+        }
+        
+        // Check description
+        if self.description.to_lowercase().contains(&query_lower) {
+            return true;
+        }
+        
+        // Check server name
+        if self.server_name.to_lowercase().contains(&query_lower) {
+            return true;
+        }
+        
+        // Check parameter names and descriptions
+        for param in &self.parameters {
+            if param.name.to_lowercase().contains(&query_lower) {
+                return true;
+            }
+            
+            if let Some(desc) = &param.description {
+                if desc.to_lowercase().contains(&query_lower) {
+                    return true;
+                }
+            }
+        }
+        
+        false
+    }
 }
 
 /// Parameter definition for an MCP tool
@@ -715,5 +830,133 @@ mod mcp_tests {
         assert_eq!(deserialized.id, tool_context.id);
         assert_eq!(deserialized.server_name, tool_context.server_name);
         assert_eq!(deserialized.tool_name, tool_context.tool_name);
+    }
+
+    #[test]
+    fn test_mcp_tool_context_to_function_definition() {
+        println!("\n🔧 Testing MCP Tool Context to Function Definition");
+        
+        let tool_context = McpToolContext::new(
+            "test-id".to_string(),
+            "weather-server".to_string(),
+            "get_weather".to_string(),
+            "Get current weather for a location".to_string(),
+            vec![
+                ToolParameter::new("location".to_string(), "string".to_string(), Some("The location to get weather for".to_string()), true),
+                ToolParameter::new("units".to_string(), "string".to_string(), Some("Temperature units (celsius/fahrenheit)".to_string()), false),
+            ],
+            McpServerConfig::new("weather-server".to_string(), vec![], None, 30000),
+            "Weather tool for getting current conditions".to_string(),
+        );
+
+        let function_def = tool_context.to_function_definition();
+        println!("📊 Function definition: {}", serde_json::to_string_pretty(&function_def).unwrap());
+
+        // Verify the structure
+        assert_eq!(function_def["name"], "weather-server_get_weather");
+        assert_eq!(function_def["description"], "Get current weather for a location");
+        
+        let input_schema = &function_def["input_schema"];
+        assert_eq!(input_schema["type"], "object");
+        
+        let properties = &input_schema["properties"];
+        assert!(properties["location"].is_object());
+        assert!(properties["units"].is_object());
+        
+        let required = &input_schema["required"];
+        assert!(required.as_array().unwrap().contains(&serde_json::Value::String("location".to_string())));
+        assert!(!required.as_array().unwrap().contains(&serde_json::Value::String("units".to_string())));
+
+        println!("✅ Function definition test completed");
+    }
+
+    #[test]
+    fn test_mcp_tool_context_to_tool_spec() {
+        println!("\n🔧 Testing MCP Tool Context to Tool Spec");
+        
+        let tool_context = McpToolContext::new(
+            "test-id".to_string(),
+            "file-server".to_string(),
+            "read_file".to_string(),
+            "Read contents of a file".to_string(),
+            vec![
+                ToolParameter::new("path".to_string(), "string".to_string(), Some("Path to the file".to_string()), true),
+            ],
+            McpServerConfig::new("file-server".to_string(), vec![], None, 30000),
+            "File reading tool".to_string(),
+        );
+
+        let tool_spec = tool_context.to_tool_spec();
+        println!("📊 Tool spec: {}", serde_json::to_string_pretty(&tool_spec).unwrap());
+
+        // Verify the structure
+        assert_eq!(tool_spec["name"], "file-server_read_file");
+        assert_eq!(tool_spec["description"], "Read contents of a file");
+        assert_eq!(tool_spec["toolOrigin"], "mcp");
+        
+        let input_schema = &tool_spec["inputSchema"];
+        assert_eq!(input_schema["type"], "object");
+        
+        let properties = &input_schema["properties"];
+        assert!(properties["path"].is_object());
+
+        println!("✅ Tool spec test completed");
+    }
+
+    #[test]
+    fn test_mcp_tool_context_function_name() {
+        println!("\n🔧 Testing MCP Tool Context Function Name");
+        
+        let tool_context = McpToolContext::new(
+            "test-id".to_string(),
+            "database-server".to_string(),
+            "query_table".to_string(),
+            "Query a database table".to_string(),
+            vec![],
+            McpServerConfig::new("database-server".to_string(), vec![], None, 30000),
+            "Database query tool".to_string(),
+        );
+
+        let function_name = tool_context.get_function_name();
+        println!("📊 Function name: {}", function_name);
+        
+        assert_eq!(function_name, "database-server_query_table");
+
+        println!("✅ Function name test completed");
+    }
+
+    #[test]
+    fn test_mcp_tool_context_query_matching() {
+        println!("\n🔧 Testing MCP Tool Context Query Matching");
+        
+        let tool_context = McpToolContext::new(
+            "test-id".to_string(),
+            "weather-server".to_string(),
+            "get_current_weather".to_string(),
+            "Get current weather conditions for any location".to_string(),
+            vec![
+                ToolParameter::new("location".to_string(), "string".to_string(), Some("Geographic location".to_string()), true),
+                ToolParameter::new("temperature_unit".to_string(), "string".to_string(), Some("Temperature measurement unit".to_string()), false),
+            ],
+            McpServerConfig::new("weather-server".to_string(), vec![], None, 30000),
+            "Weather information retrieval tool".to_string(),
+        );
+
+        // Test various query matches
+        assert!(tool_context.matches_query("weather"), "Should match tool name");
+        assert!(tool_context.matches_query("current"), "Should match description");
+        assert!(tool_context.matches_query("location"), "Should match parameter name");
+        assert!(tool_context.matches_query("temperature"), "Should match parameter description");
+        assert!(tool_context.matches_query("weather-server"), "Should match server name");
+        
+        // Test case insensitivity
+        assert!(tool_context.matches_query("WEATHER"), "Should be case insensitive");
+        assert!(tool_context.matches_query("Weather"), "Should be case insensitive");
+        
+        // Test non-matches
+        assert!(!tool_context.matches_query("database"), "Should not match unrelated terms");
+        assert!(!tool_context.matches_query("xyz"), "Should not match random terms");
+
+        println!("✅ Query matching test completed");
     }
 }
