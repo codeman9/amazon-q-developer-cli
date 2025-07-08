@@ -1,13 +1,15 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::hash::{DefaultHasher, Hasher};
 
 use eyre::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use semantic_search_client::types::{McpServerConfig as SemanticMcpServerConfig, McpToolContext};
 use chrono::Utc;
 use tracing::{debug, info, warn, error, instrument};
+use convert_case::Casing;
 
-use crate::cli::chat::tool_manager::{McpServerConfig, global_mcp_config_path, workspace_mcp_config_path};
+use crate::cli::chat::tool_manager::{McpServerConfig, global_mcp_config_path, workspace_mcp_config_path, sanitize_name, get_valid_tool_name_regex};
 use crate::mcp_client::{
     Client as McpClient,
     ClientConfig as McpClientConfig,
@@ -464,36 +466,20 @@ impl ToolSchemaProcessor {
             if parts.len() == 2 {
                 (parts[0].to_string(), parts[1].to_string())
             } else {
-                // Fallback to original server name normalization
-                let normalized = server.name
-                    .replace("-", "_")
-                    .chars()
-                    .enumerate()
-                    .fold(String::new(), |mut acc, (i, c)| {
-                        if i > 0 && c.is_uppercase() {
-                            acc.push('_');
-                        }
-                        acc.push(c);
-                        acc
-                    })
-                    .to_lowercase();
-                (normalized, tool_name.to_string())
+                // Fallback to proper server name sanitization
+                let snaked_cased_name = server.name.to_case(convert_case::Case::Snake);
+                let regex = get_valid_tool_name_regex();
+                let mut hasher = DefaultHasher::new();
+                let sanitized = sanitize_name(snaked_cased_name, &regex, &mut hasher);
+                (sanitized, tool_name.to_string())
             }
         } else {
-            // Fallback to original server name normalization
-            let normalized = server.name
-                .replace("-", "_")
-                .chars()
-                .enumerate()
-                .fold(String::new(), |mut acc, (i, c)| {
-                    if i > 0 && c.is_uppercase() {
-                        acc.push('_');
-                    }
-                    acc.push(c);
-                    acc
-                })
-                .to_lowercase();
-            (normalized, tool_name.to_string())
+            // Use proper server name sanitization
+            let snaked_cased_name = server.name.to_case(convert_case::Case::Snake);
+            let regex = get_valid_tool_name_regex();
+            let mut hasher = DefaultHasher::new();
+            let sanitized = sanitize_name(snaked_cased_name, &regex, &mut hasher);
+            (sanitized, tool_name.to_string())
         };
 
         let context = McpToolContext {

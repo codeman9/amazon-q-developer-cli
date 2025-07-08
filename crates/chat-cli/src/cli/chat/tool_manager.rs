@@ -100,6 +100,11 @@ const NAMESPACE_DELIMITER: &str = "___";
 // This applies for both mcp server and tool name since in the end the tool name as seen by the
 // model is just {server_name}{NAMESPACE_DELIMITER}{tool_name}
 const VALID_TOOL_NAME: &str = "^[a-zA-Z][a-zA-Z0-9_]*$";
+
+/// Get the regex pattern for valid tool names
+pub fn get_valid_tool_name_regex() -> regex::Regex {
+    regex::Regex::new(VALID_TOOL_NAME).unwrap()
+}
 const SPINNER_CHARS: [char; 10] = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
 pub fn workspace_mcp_config_path(os: &Os) -> eyre::Result<PathBuf> {
@@ -1524,7 +1529,7 @@ fn process_tool_specs(
     }
 }
 
-fn sanitize_name(orig: String, regex: &regex::Regex, hasher: &mut impl Hasher) -> String {
+pub fn sanitize_name(orig: String, regex: &regex::Regex, hasher: &mut impl Hasher) -> String {
     if regex.is_match(&orig) && !orig.contains(NAMESPACE_DELIMITER) {
         return orig;
     }
