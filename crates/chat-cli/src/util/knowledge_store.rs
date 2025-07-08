@@ -2,13 +2,18 @@ use std::sync::{
     Arc,
     LazyLock as Lazy,
 };
+use std::time::Duration;
 
 use eyre::Result;
 use semantic_search_client::KnowledgeContext;
 use semantic_search_client::client::AsyncSemanticSearchClient;
 use semantic_search_client::types::SearchResult;
 use tokio::sync::Mutex;
+use tokio::time::timeout;
 use uuid::Uuid;
+
+// Timeout constants for knowledge operations
+const MCP_REFRESH_TIMEOUT: Duration = Duration::from_secs(120); // 2 minutes for full refresh
 
 /// MCP indexing log levels
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -446,6 +451,15 @@ impl KnowledgeStore {
 
     /// Refresh MCP tools by discovering and indexing MCP servers from mcp.json
     pub async fn refresh_mcp_tools(&mut self) -> Result<String, String> {
+        // Apply timeout to the entire refresh operation
+        match timeout(MCP_REFRESH_TIMEOUT, self.refresh_mcp_tools_internal()).await {
+            Ok(result) => result,
+            Err(_) => Err(format!("MCP refresh operation timed out after {} seconds", MCP_REFRESH_TIMEOUT.as_secs())),
+        }
+    }
+
+    /// Internal MCP refresh method without timeout wrapper
+    async fn refresh_mcp_tools_internal(&mut self) -> Result<String, String> {
         use crate::util::mcp_processor::{McpDiscoveryService, ToolSchemaProcessor};
         use std::path::PathBuf;
         use crate::os::Os;

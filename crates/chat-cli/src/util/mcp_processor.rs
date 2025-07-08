@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::hash::{DefaultHasher, Hasher};
+use std::time::Duration;
 
 use eyre::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
@@ -8,8 +9,44 @@ use semantic_search_client::types::{McpServerConfig as SemanticMcpServerConfig, 
 use chrono::Utc;
 use tracing::{debug, info, warn, error, instrument};
 use convert_case::Casing;
+use tokio::time::timeout;
+use tokio_util::sync::CancellationToken;
 
 use crate::cli::chat::tool_manager::{McpServerConfig, global_mcp_config_path, workspace_mcp_config_path, sanitize_name, get_valid_tool_name_regex};
+use crate::util::mcp_error::{McpError, McpResult, RetryConfig};
+
+// Timeout constants for MCP operations
+const MCP_SERVER_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(30);
+const MCP_SERVER_CONNECTION_TIMEOUT: Duration = Duration::from_secs(15);
+const MCP_TOOL_SCHEMA_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Wrapper for timeout operations with cancellation support
+async fn with_timeout_and_cancellation<T, F>(
+    operation: F,
+    timeout_duration: Duration,
+    cancel_token: &CancellationToken,
+    operation_name: &str,
+) -> McpResult<T>
+where
+    F: std::future::Future<Output = McpResult<T>>,
+{
+    tokio::select! {
+        result = timeout(timeout_duration, operation) => {
+            match result {
+                Ok(inner_result) => inner_result,
+                Err(_) => Err(McpError::OperationTimeout {
+                    operation: operation_name.to_string(),
+                    timeout_seconds: timeout_duration.as_secs(),
+                }),
+            }
+        }
+        _ = cancel_token.cancelled() => {
+            Err(McpError::OperationCancelled {
+                operation: operation_name.to_string(),
+            })
+        }
+    }
+}
 use crate::mcp_client::{
     Client as McpClient,
     ClientConfig as McpClientConfig,
@@ -18,7 +55,6 @@ use crate::mcp_client::{
 };
 use crate::os::Os;
 
-use super::mcp_error::{McpError, McpResult, RetryConfig};
 use super::mcp_retry::RetryExecutor;
 
 /// Information about a discovered MCP server
@@ -68,6 +104,23 @@ impl McpDiscoveryService {
     /// Discover all enabled MCP servers with options
     #[instrument(skip(self))]
     pub async fn discover_servers_with_options(&self, verbose: bool) -> McpResult<Vec<McpServerInfo>> {
+        let cancel_token = CancellationToken::new();
+        self.discover_servers_with_options_cancellable(verbose, &cancel_token).await
+    }
+
+    /// Discover MCP servers with timeout and cancellation support
+    #[instrument(skip(self, cancel_token))]
+    pub async fn discover_servers_with_options_cancellable(&self, verbose: bool, cancel_token: &CancellationToken) -> McpResult<Vec<McpServerInfo>> {
+        with_timeout_and_cancellation(
+            self.discover_servers_with_options_internal(verbose),
+            MCP_SERVER_DISCOVERY_TIMEOUT,
+            cancel_token,
+            "MCP server discovery"
+        ).await
+    }
+
+    /// Internal discovery method without timeout wrapper
+    async fn discover_servers_with_options_internal(&self, verbose: bool) -> McpResult<Vec<McpServerInfo>> {
         info!("Starting MCP server discovery");
         
         let mut servers = Vec::new();
@@ -142,8 +195,24 @@ impl McpDiscoveryService {
         Ok(results)
     }
 
-    /// Get tool schemas from a single MCP server with proper error handling
+    /// Get tool schemas from a single MCP server with proper error handling and timeout
     async fn get_server_tool_schemas_with_error_handling(&self, server: &McpServerInfo) -> McpResult<ToolsListResult> {
+        let cancel_token = CancellationToken::new();
+        self.get_server_tool_schemas_with_error_handling_cancellable(server, &cancel_token).await
+    }
+
+    /// Get tool schemas from a single MCP server with cancellation support
+    async fn get_server_tool_schemas_with_error_handling_cancellable(&self, server: &McpServerInfo, cancel_token: &CancellationToken) -> McpResult<ToolsListResult> {
+        with_timeout_and_cancellation(
+            self.get_server_tool_schemas_internal(server),
+            MCP_SERVER_CONNECTION_TIMEOUT,
+            cancel_token,
+            &format!("MCP server connection to '{}'", server.name)
+        ).await
+    }
+
+    /// Internal method for getting tool schemas without timeout wrapper
+    async fn get_server_tool_schemas_internal(&self, server: &McpServerInfo) -> McpResult<ToolsListResult> {
         // First validate the server configuration
         self.validate_server_config(server)
             .map_err(|e| McpError::MalformedServerConfig {

@@ -83,6 +83,9 @@ pub enum McpError {
     #[error("MCP operation was cancelled: {operation}")]
     OperationCancelled { operation: String },
     
+    #[error("Operation '{operation}' timed out after {timeout_seconds} seconds")]
+    OperationTimeout { operation: String, timeout_seconds: u64 },
+    
     #[error("Internal MCP error: {message}")]
     Internal { message: String },
     
@@ -178,6 +181,10 @@ impl Clone for McpError {
                 message: format!("JSON error in {}: {}", context, source) 
             },
             Self::OperationCancelled { operation } => Self::OperationCancelled { operation: operation.clone() },
+            Self::OperationTimeout { operation, timeout_seconds } => Self::OperationTimeout { 
+                operation: operation.clone(), 
+                timeout_seconds: *timeout_seconds 
+            },
             Self::Internal { message } => Self::Internal { message: message.clone() },
             
             // Wrapped errors - convert to internal errors since they can't be cloned
@@ -258,6 +265,7 @@ impl McpError {
             Self::SearchFailed { .. } |
             Self::IoError { .. } |
             Self::JsonError { .. } |
+            Self::OperationTimeout { .. } |
             Self::Internal { .. } => false,
             
             // Wrapped errors - delegate to source
