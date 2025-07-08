@@ -1,22 +1,22 @@
 pub mod consts;
 pub mod directories;
 pub mod knowledge_store;
-pub mod mcp_processor;
-pub mod mcp_llm_integration;
 pub mod mcp_error;
+pub mod mcp_llm_integration;
+pub mod mcp_processor;
 pub mod mcp_retry;
 pub mod mcp_tool_integration;
 pub mod selective_mcp_loader;
 
 // Make test_utils available for integration tests
-#[cfg(any(test, feature = "test-utils"))]
-pub mod test_utils;
 pub mod open;
 pub mod process;
 pub mod spinner;
 pub mod system_info;
 #[cfg(test)]
 pub mod test;
+#[cfg(any(test, feature = "test-utils"))]
+pub mod test_utils;
 
 use std::fmt::Display;
 use std::io::{

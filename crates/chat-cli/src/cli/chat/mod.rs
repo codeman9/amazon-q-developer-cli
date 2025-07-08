@@ -284,16 +284,19 @@ impl ChatArgs {
         info!(?conversation_id, "Generated new conversation id");
         let (prompt_request_sender, prompt_request_receiver) = std::sync::mpsc::channel::<Option<String>>();
         let (prompt_response_sender, prompt_response_receiver) = std::sync::mpsc::channel::<Vec<String>>();
-        
+
         // Check if MCP auto-indexing is enabled to determine loading strategy
         let mcp_auto_indexing_enabled = {
-            use crate::database::settings::{Setting, Settings};
+            use crate::database::settings::{
+                Setting,
+                Settings,
+            };
             match Settings::new().await {
                 Ok(settings) => settings.get_bool(Setting::McpAutoIndexingEnabled).unwrap_or(true),
                 Err(_) => true, // Default to enabled
             }
         };
-        
+
         let mut tool_manager = if mcp_auto_indexing_enabled {
             // When auto-indexing is enabled, don't load MCP servers traditionally
             // Tools will be available through RAG-based discovery and on-demand loading
@@ -316,8 +319,38 @@ impl ChatArgs {
                 .build(os, Box::new(std::io::stderr()), !self.non_interactive)
                 .await?
         };
-        
+
         let tool_config = tool_manager.load_tools(os, &mut stderr).await?;
+        let mut tool_permissions = ToolPermissions::new(tool_config.len());
+
+        // Initialize KnowledgeStore singleton to trigger automatic MCP indexing
+        // This ensures MCP tools are available from the start of the chat session
+        use crate::util::knowledge_store::KnowledgeStore;
+        let _ = KnowledgeStore::get_async_instance().await;
+
+        if self.trust_all_tools {
+            tool_permissions.trust_all = true;
+            for tool in tool_config.values() {
+                tool_permissions.trust_tool(&tool.name);
+            }
+        } else if let Some(trusted) = self.trust_tools.map(|vec| vec.into_iter().collect::<HashSet<_>>()) {
+            // --trust-all-tools takes precedence over --trust-tools=...
+            for tool_name in &trusted {
+                if !tool_name.is_empty() {
+                    // Store the original trust settings for later use with MCP tools
+                    tool_permissions.add_pending_trust_tool(tool_name.clone());
+                }
+            }
+
+            // Apply to currently known tools
+            for tool in tool_config.values() {
+                if trusted.contains(&tool.name) {
+                    tool_permissions.trust_tool(&tool.name);
+                } else {
+                    tool_permissions.untrust_tool(&tool.name);
+                }
+            }
+        }
 
         ChatSession::new(
             os,

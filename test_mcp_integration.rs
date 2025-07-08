@@ -1,13 +1,15 @@
-use chat_cli::util::{
-    knowledge_store::KnowledgeStore,
-    mcp_tool_integration::{McpToolIntegrationService, integrate_mcp_tools_into_config},
-};
 use std::collections::HashMap;
+
+use chat_cli::util::knowledge_store::KnowledgeStore;
+use chat_cli::util::mcp_tool_integration::{
+    McpToolIntegrationService,
+    integrate_mcp_tools_into_config,
+};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Testing MCP integration...");
-    
+
     // Test 1: Check if knowledge store has MCP contexts
     println!("1. Testing KnowledgeStore...");
     let knowledge_store = KnowledgeStore::new().await?;
@@ -18,7 +20,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("   - MCP Context: {}", context.name);
         }
     }
-    
+
     // Test 2: Try to get MCP tools for LLM with different queries
     println!("2. Testing MCP tools for LLM...");
     let queries = ["tool", "build", "xcode", "function", ""];
@@ -33,11 +35,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 if tools.len() > 0 {
                     break; // Found some tools, stop trying
                 }
-            }
+            },
             Err(e) => println!("   Error getting MCP tools for '{}': {}", query, e),
         }
     }
-    
+
     // Test 3: Try MCP integration service
     println!("3. Testing MCP integration service...");
     match McpToolIntegrationService::new().await {
@@ -47,10 +49,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 Ok(specs) => println!("   Got {} tool specs", specs.len()),
                 Err(e) => println!("   Error getting tool specs: {}", e),
             }
-        }
+        },
         Err(e) => println!("   Error creating MCP integration service: {}", e),
     }
-    
+
     // Test 4: Try integration function
     println!("4. Testing integration function...");
     let mut empty_config = HashMap::new();
@@ -58,6 +60,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Ok(integrated) => println!("   Integration successful, got {} tools", integrated.len()),
         Err(e) => println!("   Integration failed: {}", e),
     }
-    
+
     Ok(())
 }

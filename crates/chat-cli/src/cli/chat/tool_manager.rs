@@ -85,7 +85,6 @@ use crate::cli::chat::tools::{
     ToolSpec,
 };
 use crate::database::settings::Setting;
-use crate::util::selective_mcp_loader::SelectiveMcpLoader;
 use crate::mcp_client::{
     JsonRpcResponse,
     Messenger,
@@ -95,6 +94,7 @@ use crate::os::Os;
 use crate::telemetry::TelemetryThread;
 use crate::util::MCP_SERVER_TOOL_DELIMITER;
 use crate::util::directories::home_dir;
+use crate::util::selective_mcp_loader::SelectiveMcpLoader;
 
 const NAMESPACE_DELIMITER: &str = "___";
 // This applies for both mcp server and tool name since in the end the tool name as seen by the
@@ -196,7 +196,10 @@ impl ToolManagerBuilder {
 
         // Check if selective loading is enabled
         let selective_loading_enabled = {
-            use crate::database::settings::{Setting, Settings};
+            use crate::database::settings::{
+                Setting,
+                Settings,
+            };
             match Settings::new().await {
                 Ok(settings) => settings.get_bool(Setting::McpSelectiveLoadingEnabled).unwrap_or(false),
                 Err(_) => false,
@@ -209,17 +212,21 @@ impl ToolManagerBuilder {
                 Ok(loader) => {
                     if interactive {
                         let stats = loader.get_server_stats().await;
-                        writeln!(output, "🔧 Selective MCP Loading: {} servers available, loading on-demand", stats.total_available)?;
+                        writeln!(
+                            output,
+                            "🔧 Selective MCP Loading: {} servers available, loading on-demand",
+                            stats.total_available
+                        )?;
                     }
                     Some(Arc::new(RwLock::new(loader)))
-                }
+                },
                 Err(e) => {
                     if interactive {
                         writeln!(output, "⚠️  Selective MCP Loading failed to initialize: {}", e)?;
                         writeln!(output, "   Falling back to traditional loading...")?;
                     }
                     None
-                }
+                },
             }
         } else {
             None
@@ -259,8 +266,11 @@ impl ToolManagerBuilder {
                         );
                         None
                     } else {
-                        let custom_tool_client = CustomToolClient::from_config(server_name.clone(), server_config);
-                        Some((server_name, custom_tool_client))
+                        let snaked_cased_name = server_name.to_case(convert_case::Case::Snake);
+                        let sanitized_server_name = sanitize_name(snaked_cased_name, &regex, &mut hasher);
+                        let custom_tool_client =
+                            CustomToolClient::from_config(sanitized_server_name.clone(), server_config);
+                        (sanitized_server_name, custom_tool_client)
                     }
                 })
                 .collect::<Vec<(String, _)>>()
@@ -913,58 +923,31 @@ impl Clone for ToolManager {
 
 impl ToolManager {
     /// Load MCP servers based on a query (selective loading)
+    #[allow(dead_code)]
     pub async fn load_servers_for_query(&mut self, query: &str) -> eyre::Result<Vec<String>> {
         if let Some(selective_loader) = &self.selective_loader {
             let loader = selective_loader.read().await;
             let server_names = loader.get_servers_for_query(query, Some(5)).await?;
-            
+
             if !server_names.is_empty() {
                 let loaded_servers = loader.load_servers(&server_names).await?;
-                
+
                 // Add loaded servers to our clients map
                 for (name, client) in loaded_servers {
                     self.clients.insert(name, client);
                 }
-                
-                tracing::info!("🔧 Loaded {} MCP servers for query: {:?}", server_names.len(), server_names);
+
+                tracing::info!(
+                    "🔧 Loaded {} MCP servers for query: {:?}",
+                    server_names.len(),
+                    server_names
+                );
             }
-            
+
             Ok(server_names)
         } else {
             Ok(Vec::new()) // Selective loading not enabled
         }
-    }
-
-    /// Check if selective loading is enabled
-    pub fn is_selective_loading_enabled(&self) -> bool {
-        self.selective_loader.is_some()
-    }
-
-    /// Get selective loading statistics
-    pub async fn get_selective_loading_stats(&self) -> Option<crate::util::selective_mcp_loader::ServerStats> {
-        if let Some(selective_loader) = &self.selective_loader {
-            let loader = selective_loader.read().await;
-            Some(loader.get_server_stats().await)
-        } else {
-            None
-        }
-    }
-
-    /// Smart preload common servers (selective loading)
-    pub async fn smart_preload_servers(&mut self) -> eyre::Result<()> {
-        if let Some(selective_loader) = &self.selective_loader {
-            let loader = selective_loader.read().await;
-            let common_servers = vec!["git".to_string(), "fetch".to_string()];
-            let loaded_servers = loader.load_servers(&common_servers).await?;
-            
-            // Add loaded servers to our clients map
-            for (name, client) in loaded_servers {
-                self.clients.insert(name, client);
-            }
-            
-            tracing::info!("🔧 Preloaded {} common MCP servers", common_servers.len());
-        }
-        Ok(())
     }
 
     pub async fn load_tools(
@@ -1026,7 +1009,7 @@ impl ToolManager {
                     eprintln!("Warning: Failed to integrate MCP tools: {}", e);
                     // Return empty HashMap since tool_specs was moved
                     HashMap::new()
-                }
+                },
             }
         };
         let load_tools = self

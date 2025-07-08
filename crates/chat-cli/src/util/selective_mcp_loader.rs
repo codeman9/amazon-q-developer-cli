@@ -1,11 +1,21 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{
+    HashMap,
+    HashSet,
+};
 use std::sync::Arc;
-use tokio::sync::RwLock;
-use eyre::Result;
 
+use eyre::Result;
+use tokio::sync::RwLock;
+
+use crate::cli::chat::tools::custom_tool::{
+    CustomToolClient,
+    CustomToolConfig,
+};
 use crate::util::knowledge_store::KnowledgeStore;
-use crate::util::mcp_processor::{McpDiscoveryService, McpServerInfo};
-use crate::cli::chat::tools::custom_tool::{CustomToolClient, CustomToolConfig};
+use crate::util::mcp_processor::{
+    McpDiscoveryService,
+    McpServerInfo,
+};
 
 /// Selective MCP server loader that only starts servers based on RAG tool selection
 #[derive(Debug)]
@@ -16,8 +26,6 @@ pub struct SelectiveMcpLoader {
     loaded_servers: Arc<RwLock<HashMap<String, Arc<CustomToolClient>>>>,
     /// Knowledge store for RAG-based tool selection
     knowledge_store: Arc<RwLock<KnowledgeStore>>,
-    /// Discovery service for MCP servers
-    discovery_service: McpDiscoveryService,
 }
 
 impl SelectiveMcpLoader {
@@ -26,7 +34,7 @@ impl SelectiveMcpLoader {
         let discovery_service = McpDiscoveryService::new().await?;
         // Use quiet mode to prevent duplicate discovery messages
         let servers = discovery_service.discover_servers_with_options(false).await?;
-        
+
         // Convert to HashMap for easy lookup
         let available_servers = servers
             .into_iter()
@@ -34,23 +42,24 @@ impl SelectiveMcpLoader {
             .collect();
 
         let knowledge_store = Arc::new(RwLock::new(KnowledgeStore::new().await?));
-        
+
         Ok(Self {
             available_servers,
             loaded_servers: Arc::new(RwLock::new(HashMap::new())),
             knowledge_store,
-            discovery_service,
         })
     }
 
     /// Get servers needed for a specific query using RAG
     pub async fn get_servers_for_query(&self, query: &str, max_servers: Option<usize>) -> Result<Vec<String>> {
         let knowledge_store = self.knowledge_store.read().await;
-        
+
         // Search for relevant MCP tools
-        let search_results = knowledge_store.search_mcp_tools_for_llm(query, max_servers).await
+        let search_results = knowledge_store
+            .search_mcp_tools_for_llm(query, max_servers)
+            .await
             .map_err(|e| eyre::eyre!("Failed to search MCP tools: {}", e))?;
-        
+
         // Extract server names from search results
         let mut server_names = HashSet::new();
         for result in search_results {
@@ -58,7 +67,7 @@ impl SelectiveMcpLoader {
                 server_names.insert(server_name.to_string());
             }
         }
-        
+
         Ok(server_names.into_iter().collect())
     }
 
@@ -82,10 +91,10 @@ impl SelectiveMcpLoader {
                         loaded_servers.insert(server_name.clone(), client_arc.clone());
                         newly_loaded.insert(server_name.clone(), client_arc);
                         tracing::info!("✓ Loaded MCP server: {}", server_name);
-                    }
+                    },
                     Err(e) => {
                         tracing::warn!("Failed to load MCP server {}: {}", server_name, e);
-                    }
+                    },
                 }
             } else {
                 tracing::warn!("Unknown MCP server requested: {}", server_name);
@@ -109,24 +118,24 @@ impl SelectiveMcpLoader {
     /// Unload unused servers to free resources
     pub async fn unload_servers(&self, server_names: &[String]) -> Result<()> {
         let mut loaded_servers = self.loaded_servers.write().await;
-        
+
         for server_name in server_names {
             if let Some(client) = loaded_servers.remove(server_name) {
                 // Gracefully shutdown the client if possible
-                // Note: CustomToolClient doesn't have explicit shutdown, 
+                // Note: CustomToolClient doesn't have explicit shutdown,
                 // but dropping it should clean up resources
                 drop(client);
                 tracing::info!("✓ Unloaded MCP server: {}", server_name);
             }
         }
-        
+
         Ok(())
     }
 
     /// Get server statistics
     pub async fn get_server_stats(&self) -> ServerStats {
         let loaded_servers = self.loaded_servers.read().await;
-        
+
         ServerStats {
             total_available: self.available_servers.len(),
             currently_loaded: loaded_servers.len(),
@@ -166,7 +175,7 @@ impl SelectiveMcpLoader {
     pub async fn get_servers_for_conversation(&self, context: &str) -> Result<HashMap<String, Arc<CustomToolClient>>> {
         // Use RAG to determine relevant servers
         let server_names = self.get_servers_for_query(context, Some(5)).await?;
-        
+
         // Load only the relevant servers
         self.load_servers(&server_names).await
     }

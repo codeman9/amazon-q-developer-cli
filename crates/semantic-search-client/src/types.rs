@@ -297,25 +297,25 @@ impl ProgressInfo {
 pub struct McpToolContext {
     /// Unique identifier for the tool context
     pub id: String,
-    
+
     /// Name of the MCP server providing this tool
     pub server_name: String,
-    
+
     /// Name of the tool
     pub tool_name: String,
-    
+
     /// Description of what the tool does
     pub description: String,
-    
+
     /// Parameters that the tool accepts
     pub parameters: Vec<ToolParameter>,
-    
+
     /// Configuration of the MCP server
     pub server_config: McpServerConfig,
-    
+
     /// Searchable text representation for embeddings
     pub indexed_content: String,
-    
+
     /// When this tool context was last updated
     pub last_updated: DateTime<Utc>,
 }
@@ -351,17 +351,20 @@ impl McpToolContext {
         // Convert tool parameters to JSON schema properties
         for param in &self.parameters {
             let mut param_schema = serde_json::Map::new();
-            
+
             // Set parameter type
             param_schema.insert("type".to_string(), serde_json::Value::String(param.param_type.clone()));
-            
+
             // Add description if available
             if let Some(description) = &param.description {
-                param_schema.insert("description".to_string(), serde_json::Value::String(description.clone()));
+                param_schema.insert(
+                    "description".to_string(),
+                    serde_json::Value::String(description.clone()),
+                );
             }
-            
+
             properties.insert(param.name.clone(), serde_json::Value::Object(param_schema));
-            
+
             // Add to required array if parameter is required
             if param.required {
                 required.push(serde_json::Value::String(param.name.clone()));
@@ -388,17 +391,20 @@ impl McpToolContext {
         // Convert tool parameters to JSON schema properties
         for param in &self.parameters {
             let mut param_schema = serde_json::Map::new();
-            
+
             // Set parameter type
             param_schema.insert("type".to_string(), serde_json::Value::String(param.param_type.clone()));
-            
+
             // Add description if available
             if let Some(description) = &param.description {
-                param_schema.insert("description".to_string(), serde_json::Value::String(description.clone()));
+                param_schema.insert(
+                    "description".to_string(),
+                    serde_json::Value::String(description.clone()),
+                );
             }
-            
+
             properties.insert(param.name.clone(), serde_json::Value::Object(param_schema));
-            
+
             // Add to required array if parameter is required
             if param.required {
                 required.push(serde_json::Value::String(param.name.clone()));
@@ -426,35 +432,35 @@ impl McpToolContext {
     /// Check if this tool matches a given query semantically
     pub fn matches_query(&self, query: &str) -> bool {
         let query_lower = query.to_lowercase();
-        
+
         // Check tool name
         if self.tool_name.to_lowercase().contains(&query_lower) {
             return true;
         }
-        
+
         // Check description
         if self.description.to_lowercase().contains(&query_lower) {
             return true;
         }
-        
+
         // Check server name
         if self.server_name.to_lowercase().contains(&query_lower) {
             return true;
         }
-        
+
         // Check parameter names and descriptions
         for param in &self.parameters {
             if param.name.to_lowercase().contains(&query_lower) {
                 return true;
             }
-            
+
             if let Some(desc) = &param.description {
                 if desc.to_lowercase().contains(&query_lower) {
                     return true;
                 }
             }
         }
-        
+
         false
     }
 }
@@ -464,13 +470,13 @@ impl McpToolContext {
 pub struct ToolParameter {
     /// Name of the parameter
     pub name: String,
-    
+
     /// Type of the parameter (e.g., "string", "number", "boolean")
     pub param_type: String,
-    
+
     /// Optional description of the parameter
     pub description: Option<String>,
-    
+
     /// Whether this parameter is required
     pub required: bool,
 }
@@ -492,13 +498,13 @@ impl ToolParameter {
 pub struct McpServerConfig {
     /// Command to execute the MCP server
     pub command: String,
-    
+
     /// Arguments to pass to the command
     pub args: Vec<String>,
-    
+
     /// Environment variables for the server
     pub env: Option<HashMap<String, String>>,
-    
+
     /// Timeout for server operations in milliseconds
     pub timeout: u64,
 }
@@ -529,19 +535,19 @@ pub enum SearchResultType {
 pub struct EnhancedSearchResult {
     /// The original search result data
     pub base_result: SearchResult,
-    
+
     /// Type of search result
     pub result_type: SearchResultType,
-    
+
     /// MCP tool information if this is an MCP tool result
     pub mcp_tool_info: Option<McpToolContext>,
-    
+
     /// Context name for the result
     pub context_name: String,
-    
+
     /// File path if this is a document result
     pub file_path: Option<String>,
-    
+
     /// Content snippet for display
     pub content: String,
 }
@@ -563,13 +569,9 @@ impl EnhancedSearchResult {
             content,
         }
     }
-    
+
     /// Create a new MCP tool search result
-    pub fn new_mcp_tool(
-        base_result: SearchResult,
-        mcp_tool_info: McpToolContext,
-        context_name: String,
-    ) -> Self {
+    pub fn new_mcp_tool(base_result: SearchResult, mcp_tool_info: McpToolContext, context_name: String) -> Self {
         let content = format!("Tool: {} - {}", mcp_tool_info.tool_name, mcp_tool_info.description);
         Self {
             base_result,
@@ -580,7 +582,7 @@ impl EnhancedSearchResult {
             content,
         }
     }
-    
+
     /// Get the distance/similarity score
     pub fn distance(&self) -> f32 {
         self.base_result.distance
@@ -703,12 +705,7 @@ mod mcp_tests {
             ),
         ];
 
-        let server_config = McpServerConfig::new(
-            "weather-server".to_string(),
-            vec![],
-            None,
-            30000,
-        );
+        let server_config = McpServerConfig::new("weather-server".to_string(), vec![], None, 30000);
 
         let tool_context = McpToolContext::new(
             "weather-tool-1".to_string(),
@@ -741,7 +738,10 @@ mod mcp_tests {
     #[test]
     fn test_enhanced_search_result_document() {
         let mut payload = HashMap::new();
-        payload.insert("text".to_string(), serde_json::Value::String("test content".to_string()));
+        payload.insert(
+            "text".to_string(),
+            serde_json::Value::String("test content".to_string()),
+        );
 
         let data_point = DataPoint {
             id: 1,
@@ -769,7 +769,10 @@ mod mcp_tests {
     #[test]
     fn test_enhanced_search_result_mcp_tool() {
         let mut payload = HashMap::new();
-        payload.insert("tool_name".to_string(), serde_json::Value::String("get_weather".to_string()));
+        payload.insert(
+            "tool_name".to_string(),
+            serde_json::Value::String("get_weather".to_string()),
+        );
 
         let data_point = DataPoint {
             id: 2,
@@ -789,11 +792,8 @@ mod mcp_tests {
             "Weather tool content".to_string(),
         );
 
-        let enhanced_result = EnhancedSearchResult::new_mcp_tool(
-            search_result,
-            tool_context.clone(),
-            "MCP Tools".to_string(),
-        );
+        let enhanced_result =
+            EnhancedSearchResult::new_mcp_tool(search_result, tool_context.clone(), "MCP Tools".to_string());
 
         assert_eq!(enhanced_result.result_type, SearchResultType::McpTool);
         assert_eq!(enhanced_result.context_name, "MCP Tools");
@@ -801,7 +801,7 @@ mod mcp_tests {
         assert_eq!(enhanced_result.content, "Tool: get_weather - Get weather information");
         assert_eq!(enhanced_result.distance(), 0.3);
         assert!(enhanced_result.mcp_tool_info.is_some());
-        
+
         let mcp_info = enhanced_result.mcp_tool_info.unwrap();
         assert_eq!(mcp_info.tool_name, "get_weather");
         assert_eq!(mcp_info.server_name, "weather-server");
@@ -835,37 +835,60 @@ mod mcp_tests {
     #[test]
     fn test_mcp_tool_context_to_function_definition() {
         println!("\n🔧 Testing MCP Tool Context to Function Definition");
-        
+
         let tool_context = McpToolContext::new(
             "test-id".to_string(),
             "weather-server".to_string(),
             "get_weather".to_string(),
             "Get current weather for a location".to_string(),
             vec![
-                ToolParameter::new("location".to_string(), "string".to_string(), Some("The location to get weather for".to_string()), true),
-                ToolParameter::new("units".to_string(), "string".to_string(), Some("Temperature units (celsius/fahrenheit)".to_string()), false),
+                ToolParameter::new(
+                    "location".to_string(),
+                    "string".to_string(),
+                    Some("The location to get weather for".to_string()),
+                    true,
+                ),
+                ToolParameter::new(
+                    "units".to_string(),
+                    "string".to_string(),
+                    Some("Temperature units (celsius/fahrenheit)".to_string()),
+                    false,
+                ),
             ],
             McpServerConfig::new("weather-server".to_string(), vec![], None, 30000),
             "Weather tool for getting current conditions".to_string(),
         );
 
         let function_def = tool_context.to_function_definition();
-        println!("📊 Function definition: {}", serde_json::to_string_pretty(&function_def).unwrap());
+        println!(
+            "📊 Function definition: {}",
+            serde_json::to_string_pretty(&function_def).unwrap()
+        );
 
         // Verify the structure
         assert_eq!(function_def["name"], "weather-server_get_weather");
         assert_eq!(function_def["description"], "Get current weather for a location");
-        
+
         let input_schema = &function_def["input_schema"];
         assert_eq!(input_schema["type"], "object");
-        
+
         let properties = &input_schema["properties"];
         assert!(properties["location"].is_object());
         assert!(properties["units"].is_object());
-        
+
         let required = &input_schema["required"];
-        assert!(required.as_array().unwrap().contains(&serde_json::Value::String("location".to_string())));
-        assert!(!required.as_array().unwrap().contains(&serde_json::Value::String("units".to_string())));
+        assert!(
+            required
+                .as_array()
+                .unwrap()
+                .contains(&serde_json::Value::String("location".to_string()))
+        );
+        assert!(
+            !required
+                .as_array()
+                .unwrap()
+                .contains(&serde_json::Value::String("units".to_string()))
+        );
 
         println!("✅ Function definition test completed");
     }
@@ -873,15 +896,18 @@ mod mcp_tests {
     #[test]
     fn test_mcp_tool_context_to_tool_spec() {
         println!("\n🔧 Testing MCP Tool Context to Tool Spec");
-        
+
         let tool_context = McpToolContext::new(
             "test-id".to_string(),
             "file-server".to_string(),
             "read_file".to_string(),
             "Read contents of a file".to_string(),
-            vec![
-                ToolParameter::new("path".to_string(), "string".to_string(), Some("Path to the file".to_string()), true),
-            ],
+            vec![ToolParameter::new(
+                "path".to_string(),
+                "string".to_string(),
+                Some("Path to the file".to_string()),
+                true,
+            )],
             McpServerConfig::new("file-server".to_string(), vec![], None, 30000),
             "File reading tool".to_string(),
         );
@@ -893,10 +919,10 @@ mod mcp_tests {
         assert_eq!(tool_spec["name"], "file-server_read_file");
         assert_eq!(tool_spec["description"], "Read contents of a file");
         assert_eq!(tool_spec["toolOrigin"], "mcp");
-        
+
         let input_schema = &tool_spec["inputSchema"];
         assert_eq!(input_schema["type"], "object");
-        
+
         let properties = &input_schema["properties"];
         assert!(properties["path"].is_object());
 
@@ -906,7 +932,7 @@ mod mcp_tests {
     #[test]
     fn test_mcp_tool_context_function_name() {
         println!("\n🔧 Testing MCP Tool Context Function Name");
-        
+
         let tool_context = McpToolContext::new(
             "test-id".to_string(),
             "database-server".to_string(),
@@ -919,7 +945,7 @@ mod mcp_tests {
 
         let function_name = tool_context.get_function_name();
         println!("📊 Function name: {}", function_name);
-        
+
         assert_eq!(function_name, "database-server_query_table");
 
         println!("✅ Function name test completed");
@@ -928,15 +954,25 @@ mod mcp_tests {
     #[test]
     fn test_mcp_tool_context_query_matching() {
         println!("\n🔧 Testing MCP Tool Context Query Matching");
-        
+
         let tool_context = McpToolContext::new(
             "test-id".to_string(),
             "weather-server".to_string(),
             "get_current_weather".to_string(),
             "Get current weather conditions for any location".to_string(),
             vec![
-                ToolParameter::new("location".to_string(), "string".to_string(), Some("Geographic location".to_string()), true),
-                ToolParameter::new("temperature_unit".to_string(), "string".to_string(), Some("Temperature measurement unit".to_string()), false),
+                ToolParameter::new(
+                    "location".to_string(),
+                    "string".to_string(),
+                    Some("Geographic location".to_string()),
+                    true,
+                ),
+                ToolParameter::new(
+                    "temperature_unit".to_string(),
+                    "string".to_string(),
+                    Some("Temperature measurement unit".to_string()),
+                    false,
+                ),
             ],
             McpServerConfig::new("weather-server".to_string(), vec![], None, 30000),
             "Weather information retrieval tool".to_string(),
@@ -946,15 +982,21 @@ mod mcp_tests {
         assert!(tool_context.matches_query("weather"), "Should match tool name");
         assert!(tool_context.matches_query("current"), "Should match description");
         assert!(tool_context.matches_query("location"), "Should match parameter name");
-        assert!(tool_context.matches_query("temperature"), "Should match parameter description");
+        assert!(
+            tool_context.matches_query("temperature"),
+            "Should match parameter description"
+        );
         assert!(tool_context.matches_query("weather-server"), "Should match server name");
-        
+
         // Test case insensitivity
         assert!(tool_context.matches_query("WEATHER"), "Should be case insensitive");
         assert!(tool_context.matches_query("Weather"), "Should be case insensitive");
-        
+
         // Test non-matches
-        assert!(!tool_context.matches_query("database"), "Should not match unrelated terms");
+        assert!(
+            !tool_context.matches_query("database"),
+            "Should not match unrelated terms"
+        );
         assert!(!tool_context.matches_query("xyz"), "Should not match random terms");
 
         println!("✅ Query matching test completed");

@@ -3,8 +3,13 @@ use std::{
     fs,
 };
 
-use semantic_search_client::{SemanticSearchClient, McpToolContext, McpServerConfig, ToolParameter};
 use chrono::Utc;
+use semantic_search_client::{
+    McpServerConfig,
+    McpToolContext,
+    SemanticSearchClient,
+    ToolParameter,
+};
 
 #[test]
 fn test_client_initialization() {
@@ -263,7 +268,7 @@ fn test_mcp_context_creation() {
     // Search for weather-related content
     let search_results = client.search_all("weather location", Some(5)).unwrap();
     assert!(!search_results.is_empty());
-    
+
     let (found_context_id, results) = &search_results[0];
     assert_eq!(found_context_id, &context_id);
     assert!(!results.is_empty());
@@ -329,17 +334,19 @@ fn test_mcp_contexts_batch_creation() {
     ];
 
     // Add the MCP contexts as a batch
-    let context_id = client.add_mcp_contexts(
-        mcp_contexts,
-        "MCP Tools Collection",
-        "Collection of MCP tools from various servers",
-        true, // Make it persistent so metadata is stored
-    ).unwrap();
+    let context_id = client
+        .add_mcp_contexts(
+            mcp_contexts,
+            "MCP Tools Collection",
+            "Collection of MCP tools from various servers",
+            true, // Make it persistent so metadata is stored
+        )
+        .unwrap();
 
     // Verify the context was added
     let contexts = client.get_contexts();
     assert_eq!(contexts.len(), 1);
-    
+
     let context = contexts.iter().find(|c| c.id == context_id).unwrap();
     assert_eq!(context.name, "MCP Tools Collection");
     assert_eq!(context.item_count, 2);

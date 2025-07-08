@@ -1,17 +1,28 @@
 use std::future::Future;
-use std::time::{Duration, Instant};
+use std::time::{
+    Duration,
+    Instant,
+};
 
 use tokio::time::sleep;
-use tracing::{debug, warn, error};
+use tracing::{
+    debug,
+    error,
+    warn,
+};
 
-use super::mcp_error::{McpError, McpResult, RetryConfig};
+use super::mcp_error::{
+    McpError,
+    McpResult,
+    RetryConfig,
+};
 
 /// Circuit breaker states
 #[derive(Debug, Clone, PartialEq)]
 pub enum CircuitState {
-    Closed,    // Normal operation
-    Open,      // Failing, reject requests
-    HalfOpen,  // Testing if service recovered
+    Closed,   // Normal operation
+    Open,     // Failing, reject requests
+    HalfOpen, // Testing if service recovered
 }
 
 /// Circuit breaker for MCP operations
@@ -39,7 +50,7 @@ impl CircuitBreaker {
             half_open_successes: 0,
         }
     }
-    
+
     /// Check if the circuit breaker allows the operation
     pub fn can_execute(&mut self) -> bool {
         match self.state {
@@ -57,17 +68,17 @@ impl CircuitBreaker {
                 } else {
                     false
                 }
-            }
+            },
             CircuitState::HalfOpen => true,
         }
     }
-    
+
     /// Record a successful operation
     pub fn record_success(&mut self) {
         match self.state {
             CircuitState::Closed => {
                 self.failure_count = 0;
-            }
+            },
             CircuitState::HalfOpen => {
                 self.half_open_successes += 1;
                 if self.half_open_successes >= self.success_threshold {
@@ -76,39 +87,39 @@ impl CircuitBreaker {
                     self.failure_count = 0;
                     self.last_failure_time = None;
                 }
-            }
+            },
             CircuitState::Open => {
                 // Should not happen, but reset if it does
                 self.state = CircuitState::Closed;
                 self.failure_count = 0;
                 self.last_failure_time = None;
-            }
+            },
         }
     }
-    
+
     /// Record a failed operation
     pub fn record_failure(&mut self) {
         self.failure_count += 1;
         self.last_failure_time = Some(Instant::now());
-        
+
         match self.state {
             CircuitState::Closed => {
                 if self.failure_count >= self.failure_threshold {
                     warn!("Circuit breaker opening due to {} failures", self.failure_count);
                     self.state = CircuitState::Open;
                 }
-            }
+            },
             CircuitState::HalfOpen => {
                 warn!("Circuit breaker returning to open state after failure during recovery");
                 self.state = CircuitState::Open;
                 self.half_open_successes = 0;
-            }
+            },
             CircuitState::Open => {
                 // Already open, just update the failure time
-            }
+            },
         }
     }
-    
+
     /// Get the current state
     pub fn state(&self) -> &CircuitState {
         &self.state
@@ -129,7 +140,7 @@ impl RetryExecutor {
             circuit_breaker: None,
         }
     }
-    
+
     /// Create a retry executor with circuit breaker
     pub fn with_circuit_breaker(config: RetryConfig, failure_threshold: u32, recovery_timeout: Duration) -> Self {
         Self {
@@ -137,7 +148,7 @@ impl RetryExecutor {
             circuit_breaker: Some(CircuitBreaker::new(failure_threshold, recovery_timeout)),
         }
     }
-    
+
     /// Execute an operation with retry logic
     pub async fn execute<F, Fut, T>(&mut self, operation_name: &str, operation: F) -> McpResult<T>
     where
@@ -152,62 +163,77 @@ impl RetryExecutor {
                 });
             }
         }
-        
+
         let mut last_error = None;
-        
+
         for attempt in 0..self.config.max_attempts {
             if attempt > 0 {
                 let delay = self.config.delay_for_attempt(attempt);
-                debug!("Retrying {} (attempt {}/{}) after {:?}", 
-                       operation_name, attempt + 1, self.config.max_attempts, delay);
+                debug!(
+                    "Retrying {} (attempt {}/{}) after {:?}",
+                    operation_name,
+                    attempt + 1,
+                    self.config.max_attempts,
+                    delay
+                );
                 sleep(delay).await;
             }
-            
+
             match operation().await {
                 Ok(result) => {
                     if attempt > 0 {
                         debug!("Operation {} succeeded after {} retries", operation_name, attempt);
                     }
-                    
+
                     // Record success in circuit breaker
                     if let Some(ref mut cb) = self.circuit_breaker {
                         cb.record_success();
                     }
-                    
+
                     return Ok(result);
-                }
+                },
                 Err(error) => {
                     last_error = Some(error.clone());
-                    
+
                     // Check if error is retryable
                     if !error.is_retryable() {
-                        debug!("Operation {} failed with non-retryable error: {}", operation_name, error);
-                        
+                        debug!(
+                            "Operation {} failed with non-retryable error: {}",
+                            operation_name, error
+                        );
+
                         // Record failure in circuit breaker for non-retryable errors too
                         if let Some(ref mut cb) = self.circuit_breaker {
                             cb.record_failure();
                         }
-                        
+
                         return Err(error);
                     }
-                    
-                    warn!("Operation {} failed (attempt {}/{}): {}", 
-                          operation_name, attempt + 1, self.config.max_attempts, error);
-                }
+
+                    warn!(
+                        "Operation {} failed (attempt {}/{}): {}",
+                        operation_name,
+                        attempt + 1,
+                        self.config.max_attempts,
+                        error
+                    );
+                },
             }
         }
-        
+
         // All attempts failed
         let final_error = last_error.unwrap_or_else(|| McpError::internal("Unknown error"));
-        
+
         // Record failure in circuit breaker
         if let Some(ref mut cb) = self.circuit_breaker {
             cb.record_failure();
         }
-        
-        error!("Operation {} failed after {} attempts: {}", 
-               operation_name, self.config.max_attempts, final_error);
-        
+
+        error!(
+            "Operation {} failed after {} attempts: {}",
+            operation_name, self.config.max_attempts, final_error
+        );
+
         // Convert to max retries exceeded error if it was retryable
         if final_error.is_retryable() {
             if let Some(server_name) = final_error.server_name() {
@@ -222,9 +248,14 @@ impl RetryExecutor {
             Err(final_error)
         }
     }
-    
+
     /// Execute an operation with a specific server context
-    pub async fn execute_for_server<F, Fut, T>(&mut self, server_name: &str, operation_name: &str, operation: F) -> McpResult<T>
+    pub async fn execute_for_server<F, Fut, T>(
+        &mut self,
+        server_name: &str,
+        operation_name: &str,
+        operation: F,
+    ) -> McpResult<T>
     where
         F: Fn() -> Fut,
         Fut: Future<Output = McpResult<T>>,
@@ -250,29 +281,29 @@ impl HealthMonitor {
             check_interval,
         }
     }
-    
+
     /// Get or create a circuit breaker for a server
     pub fn get_circuit_breaker(&mut self, server_name: &str) -> &mut CircuitBreaker {
         self.server_states
             .entry(server_name.to_string())
             .or_insert_with(|| CircuitBreaker::new(3, Duration::from_secs(30)))
     }
-    
+
     /// Check if a server is healthy
     pub fn is_server_healthy(&mut self, server_name: &str) -> bool {
         self.get_circuit_breaker(server_name).can_execute()
     }
-    
+
     /// Record a successful operation for a server
     pub fn record_server_success(&mut self, server_name: &str) {
         self.get_circuit_breaker(server_name).record_success();
     }
-    
+
     /// Record a failed operation for a server
     pub fn record_server_failure(&mut self, server_name: &str) {
         self.get_circuit_breaker(server_name).record_failure();
     }
-    
+
     /// Get the health status of all servers
     pub fn get_server_health_status(&self) -> std::collections::HashMap<String, CircuitState> {
         self.server_states
@@ -280,7 +311,7 @@ impl HealthMonitor {
             .map(|(name, cb)| (name.clone(), cb.state().clone()))
             .collect()
     }
-    
+
     /// Get unhealthy servers
     pub fn get_unhealthy_servers(&self) -> Vec<String> {
         self.server_states
@@ -293,22 +324,26 @@ impl HealthMonitor {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{
+        Arc,
+        Mutex,
+    };
+
     use super::*;
-    use std::sync::{Arc, Mutex};
 
     #[test]
     fn test_circuit_breaker_states() {
         let mut cb = CircuitBreaker::new(2, Duration::from_secs(5));
-        
+
         // Initially closed
         assert_eq!(cb.state(), &CircuitState::Closed);
         assert!(cb.can_execute());
-        
+
         // First failure
         cb.record_failure();
         assert_eq!(cb.state(), &CircuitState::Closed);
         assert!(cb.can_execute());
-        
+
         // Second failure - should open
         cb.record_failure();
         assert_eq!(cb.state(), &CircuitState::Open);
@@ -319,26 +354,28 @@ mod tests {
     async fn test_retry_executor_success() {
         let config = RetryConfig::new(3);
         let mut executor = RetryExecutor::new(config);
-        
+
         let attempt_count = Arc::new(Mutex::new(0));
         let attempt_count_clone = attempt_count.clone();
-        
-        let result: McpResult<&str> = executor.execute("test_op", || {
-            let count = attempt_count_clone.clone();
-            async move {
-                let mut guard = count.lock().unwrap();
-                *guard += 1;
-                let current_attempt = *guard;
-                drop(guard);
-                
-                if current_attempt < 2 {
-                    Err(McpError::connection_failed("test-server", "Connection refused"))
-                } else {
-                    Ok("success")
+
+        let result: McpResult<&str> = executor
+            .execute("test_op", || {
+                let count = attempt_count_clone.clone();
+                async move {
+                    let mut guard = count.lock().unwrap();
+                    *guard += 1;
+                    let current_attempt = *guard;
+                    drop(guard);
+
+                    if current_attempt < 2 {
+                        Err(McpError::connection_failed("test-server", "Connection refused"))
+                    } else {
+                        Ok("success")
+                    }
                 }
-            }
-        }).await;
-        
+            })
+            .await;
+
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), "success");
         assert_eq!(*attempt_count.lock().unwrap(), 2);
@@ -348,21 +385,23 @@ mod tests {
     async fn test_retry_executor_max_retries() {
         let config = RetryConfig::new(2);
         let mut executor = RetryExecutor::new(config);
-        
+
         let attempt_count = Arc::new(Mutex::new(0));
         let attempt_count_clone = attempt_count.clone();
-        
-        let result: McpResult<&str> = executor.execute("test_op", || {
-            let count = attempt_count_clone.clone();
-            async move {
-                let mut guard = count.lock().unwrap();
-                *guard += 1;
-                drop(guard);
-                
-                Err(McpError::connection_failed("test-server", "Connection refused"))
-            }
-        }).await;
-        
+
+        let result: McpResult<&str> = executor
+            .execute("test_op", || {
+                let count = attempt_count_clone.clone();
+                async move {
+                    let mut guard = count.lock().unwrap();
+                    *guard += 1;
+                    drop(guard);
+
+                    Err(McpError::connection_failed("test-server", "Connection refused"))
+                }
+            })
+            .await;
+
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), McpError::MaxRetriesExceeded { .. }));
         assert_eq!(*attempt_count.lock().unwrap(), 2);
@@ -372,21 +411,25 @@ mod tests {
     async fn test_retry_executor_non_retryable() {
         let config = RetryConfig::new(3);
         let mut executor = RetryExecutor::new(config);
-        
+
         let attempt_count = Arc::new(Mutex::new(0));
         let attempt_count_clone = attempt_count.clone();
-        
-        let result: McpResult<&str> = executor.execute("test_op", || {
-            let count = attempt_count_clone.clone();
-            async move {
-                let mut guard = count.lock().unwrap();
-                *guard += 1;
-                drop(guard);
-                
-                Err(McpError::InvalidConfig { reason: "Bad config".to_string() })
-            }
-        }).await;
-        
+
+        let result: McpResult<&str> = executor
+            .execute("test_op", || {
+                let count = attempt_count_clone.clone();
+                async move {
+                    let mut guard = count.lock().unwrap();
+                    *guard += 1;
+                    drop(guard);
+
+                    Err(McpError::InvalidConfig {
+                        reason: "Bad config".to_string(),
+                    })
+                }
+            })
+            .await;
+
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), McpError::InvalidConfig { .. }));
         assert_eq!(*attempt_count.lock().unwrap(), 1); // Should not retry non-retryable errors
@@ -395,18 +438,18 @@ mod tests {
     #[test]
     fn test_health_monitor() {
         let mut monitor = HealthMonitor::new(Duration::from_secs(10));
-        
+
         // Initially healthy
         assert!(monitor.is_server_healthy("test-server"));
-        
+
         // Record failures
         monitor.record_server_failure("test-server");
         monitor.record_server_failure("test-server");
         monitor.record_server_failure("test-server");
-        
+
         // Should be unhealthy now
         assert!(!monitor.is_server_healthy("test-server"));
-        
+
         let unhealthy = monitor.get_unhealthy_servers();
         assert!(unhealthy.contains(&"test-server".to_string()));
     }

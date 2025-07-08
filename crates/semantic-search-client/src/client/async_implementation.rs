@@ -280,20 +280,18 @@ impl AsyncSemanticSearchClient {
                 if context_meta.persistent {
                     let context_dir = self.base_dir.join("contexts").join(context_id);
                     let context_file = context_dir.join("data.json");
-                    
+
                     if context_file.exists() {
                         match SemanticContext::new(context_file) {
-                            Ok(persistent_context) => {
-                                match persistent_context.search(&query_vector, effective_limit) {
-                                    Ok(results) => {
-                                        if !results.is_empty() {
-                                            all_results.push((context_id.clone(), results));
-                                        }
-                                    },
-                                    Err(e) => {
-                                        tracing::warn!("Failed to search persistent context {}: {}", context_id, e);
-                                    },
-                                }
+                            Ok(persistent_context) => match persistent_context.search(&query_vector, effective_limit) {
+                                Ok(results) => {
+                                    if !results.is_empty() {
+                                        all_results.push((context_id.clone(), results));
+                                    }
+                                },
+                                Err(e) => {
+                                    tracing::warn!("Failed to search persistent context {}: {}", context_id, e);
+                                },
                             },
                             Err(e) => {
                                 tracing::warn!("Failed to load persistent context {}: {}", context_id, e);
@@ -780,7 +778,8 @@ impl AsyncSemanticSearchClient {
         // Create the context directory
         let context_dir = if is_persistent {
             let dir = self.base_dir.join("contexts").join(&context_id);
-            tokio::fs::create_dir_all(&dir).await
+            tokio::fs::create_dir_all(&dir)
+                .await
                 .map_err(|e| SemanticSearchError::IoError(e))?;
             dir
         } else {
@@ -828,7 +827,8 @@ impl AsyncSemanticSearchClient {
 
         // Save metadata if persistent
         if is_persistent {
-            self.save_contexts_metadata_sync().await
+            self.save_contexts_metadata_sync()
+                .await
                 .map_err(|e| SemanticSearchError::InvalidArgument(e))?;
         }
 
@@ -845,35 +845,57 @@ impl AsyncSemanticSearchClient {
     /// # Returns
     ///
     /// The ID of the created context
-    pub async fn add_mcp_context(
-        &self,
-        mcp_context: McpToolContext,
-        is_persistent: bool,
-    ) -> Result<String> {
+    pub async fn add_mcp_context(&self, mcp_context: McpToolContext, is_persistent: bool) -> Result<String> {
         let context_name = format!("MCP Tool: {}", mcp_context.tool_name);
         let context_description = format!("Tool {} from {} server", mcp_context.tool_name, mcp_context.server_name);
-        
-        self.add_mcp_contexts(vec![mcp_context], &context_name, &context_description, is_persistent).await
+
+        self.add_mcp_contexts(vec![mcp_context], &context_name, &context_description, is_persistent)
+            .await
     }
 
     /// Create a data point from an MCP tool context
-    async fn create_data_point_from_mcp_context(&self, mcp_context: &McpToolContext, index: usize) -> Result<DataPoint> {
+    async fn create_data_point_from_mcp_context(
+        &self,
+        mcp_context: &McpToolContext,
+        index: usize,
+    ) -> Result<DataPoint> {
         // Generate embeddings for the indexed content
         let embeddings = self.embedder.embed(&mcp_context.indexed_content)?;
 
         // Create metadata for the MCP tool
         let mut payload = HashMap::new();
         payload.insert("type".to_string(), serde_json::Value::String("mcp_tool".to_string()));
-        payload.insert("server_name".to_string(), serde_json::Value::String(mcp_context.server_name.clone()));
-        payload.insert("tool_name".to_string(), serde_json::Value::String(mcp_context.tool_name.clone()));
+        payload.insert(
+            "server_name".to_string(),
+            serde_json::Value::String(mcp_context.server_name.clone()),
+        );
+        payload.insert(
+            "tool_name".to_string(),
+            serde_json::Value::String(mcp_context.tool_name.clone()),
+        );
         payload.insert("tool_id".to_string(), serde_json::Value::String(mcp_context.id.clone()));
-        payload.insert("description".to_string(), serde_json::Value::String(mcp_context.description.clone()));
-        payload.insert("parameter_count".to_string(), serde_json::Value::Number(mcp_context.parameters.len().into()));
-        payload.insert("content".to_string(), serde_json::Value::String(mcp_context.indexed_content.clone()));
-        
+        payload.insert(
+            "description".to_string(),
+            serde_json::Value::String(mcp_context.description.clone()),
+        );
+        payload.insert(
+            "parameter_count".to_string(),
+            serde_json::Value::Number(mcp_context.parameters.len().into()),
+        );
+        payload.insert(
+            "content".to_string(),
+            serde_json::Value::String(mcp_context.indexed_content.clone()),
+        );
+
         // Add server configuration details
-        payload.insert("server_command".to_string(), serde_json::Value::String(mcp_context.server_config.command.clone()));
-        payload.insert("server_timeout".to_string(), serde_json::Value::Number(mcp_context.server_config.timeout.into()));
+        payload.insert(
+            "server_command".to_string(),
+            serde_json::Value::String(mcp_context.server_config.command.clone()),
+        );
+        payload.insert(
+            "server_timeout".to_string(),
+            serde_json::Value::Number(mcp_context.server_config.timeout.into()),
+        );
 
         Ok(DataPoint {
             id: index,

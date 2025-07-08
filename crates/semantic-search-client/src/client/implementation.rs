@@ -1161,14 +1161,10 @@ impl SemanticSearchClient {
     /// # Returns
     ///
     /// The ID of the created context
-    pub fn add_mcp_context(
-        &mut self,
-        mcp_context: McpToolContext,
-        is_persistent: bool,
-    ) -> Result<String> {
+    pub fn add_mcp_context(&mut self, mcp_context: McpToolContext, is_persistent: bool) -> Result<String> {
         let context_name = format!("MCP Tool: {}", mcp_context.tool_name);
         let context_description = format!("Tool {} from {} server", mcp_context.tool_name, mcp_context.server_name);
-        
+
         self.add_mcp_contexts(vec![mcp_context], &context_name, &context_description, is_persistent)
     }
 
@@ -1180,16 +1176,34 @@ impl SemanticSearchClient {
         // Create metadata for the MCP tool
         let mut payload = HashMap::new();
         payload.insert("type".to_string(), Value::String("mcp_tool".to_string()));
-        payload.insert("server_name".to_string(), Value::String(mcp_context.server_name.clone()));
+        payload.insert(
+            "server_name".to_string(),
+            Value::String(mcp_context.server_name.clone()),
+        );
         payload.insert("tool_name".to_string(), Value::String(mcp_context.tool_name.clone()));
         payload.insert("tool_id".to_string(), Value::String(mcp_context.id.clone()));
-        payload.insert("description".to_string(), Value::String(mcp_context.description.clone()));
-        payload.insert("parameter_count".to_string(), Value::Number(mcp_context.parameters.len().into()));
-        payload.insert("content".to_string(), Value::String(mcp_context.indexed_content.clone()));
-        
+        payload.insert(
+            "description".to_string(),
+            Value::String(mcp_context.description.clone()),
+        );
+        payload.insert(
+            "parameter_count".to_string(),
+            Value::Number(mcp_context.parameters.len().into()),
+        );
+        payload.insert(
+            "content".to_string(),
+            Value::String(mcp_context.indexed_content.clone()),
+        );
+
         // Add server configuration details
-        payload.insert("server_command".to_string(), Value::String(mcp_context.server_config.command.clone()));
-        payload.insert("server_timeout".to_string(), Value::Number(mcp_context.server_config.timeout.into()));
+        payload.insert(
+            "server_command".to_string(),
+            Value::String(mcp_context.server_config.command.clone()),
+        );
+        payload.insert(
+            "server_timeout".to_string(),
+            Value::Number(mcp_context.server_config.timeout.into()),
+        );
 
         Ok(DataPoint {
             id: index,

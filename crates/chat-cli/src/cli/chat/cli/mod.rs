@@ -115,7 +115,10 @@ impl SlashCommand {
             Self::Mcp(args) => args.execute(session).await,
             Self::Model(args) => args.execute(session).await,
             Self::Subscribe(args) => args.execute(os, session).await,
-            Self::SelectiveLoading(subcommand) => subcommand.execute(os, session).await.map_err(|e| ChatError::Custom(e.to_string().into())),
+            Self::SelectiveLoading(subcommand) => subcommand
+                .execute(os, session)
+                .await
+                .map_err(|e| ChatError::Custom(e.to_string().into())),
             Self::Persist(subcommand) => subcommand.execute(os, session).await,
             // Self::Root(subcommand) => {
             //     if let Err(err) = subcommand.execute(os, database, telemetry).await {

@@ -359,8 +359,6 @@ impl KnowledgeStore {
 
     /// Check if we should refresh the MCP index based on interval
     async fn should_refresh_mcp_index(&self) -> bool {
-        use std::path::PathBuf;
-
         use crate::database::settings::{
             Setting,
             Settings,
@@ -434,8 +432,6 @@ impl KnowledgeStore {
 
     /// Perform background MCP indexing without blocking
     async fn background_index_mcp_tools(&mut self) -> Result<String, String> {
-        use std::path::PathBuf;
-
         use crate::os::Os;
         use crate::util::directories;
 
@@ -479,8 +475,6 @@ impl KnowledgeStore {
 
     /// Internal MCP refresh method without timeout wrapper
     async fn refresh_mcp_tools_internal(&mut self) -> Result<String, String> {
-        use std::path::PathBuf;
-
         use crate::os::Os;
         use crate::util::directories;
         use crate::util::mcp_processor::{
@@ -754,66 +748,6 @@ impl KnowledgeStore {
         });
 
         Ok(tool_spec)
-    }
-
-    /// Filter and rank MCP tools based on relevance to a query
-    pub async fn get_relevant_mcp_tools(
-        &self,
-        query: &str,
-        max_tools: usize,
-    ) -> Result<Vec<serde_json::Value>, String> {
-        let tools = self.search_mcp_tools_for_llm(query, Some(max_tools * 2)).await?;
-
-        // Filter and rank tools based on relevance
-        let mut relevant_tools: Vec<_> = tools
-            .into_iter()
-            .filter(|tool| {
-                if let Some(name) = tool.get("name").and_then(|n| n.as_str()) {
-                    if let Some(desc) = tool.get("description").and_then(|d| d.as_str()) {
-                        let query_lower = query.to_lowercase();
-                        name.to_lowercase().contains(&query_lower) || desc.to_lowercase().contains(&query_lower)
-                    } else {
-                        false
-                    }
-                } else {
-                    false
-                }
-            })
-            .collect();
-
-        // Sort by relevance (simple string matching for now)
-        relevant_tools.sort_by(|a, b| {
-            let a_score = self.calculate_relevance_score(a, query);
-            let b_score = self.calculate_relevance_score(b, query);
-            b_score.partial_cmp(&a_score).unwrap_or(std::cmp::Ordering::Equal)
-        });
-
-        // Limit to max_tools
-        relevant_tools.truncate(max_tools);
-
-        Ok(relevant_tools)
-    }
-
-    /// Calculate relevance score for a tool based on query
-    fn calculate_relevance_score(&self, tool: &serde_json::Value, query: &str) -> f32 {
-        let query_lower = query.to_lowercase();
-        let mut score = 0.0;
-
-        // Score based on name match
-        if let Some(name) = tool.get("name").and_then(|n| n.as_str()) {
-            if name.to_lowercase().contains(&query_lower) {
-                score += 2.0;
-            }
-        }
-
-        // Score based on description match
-        if let Some(desc) = tool.get("description").and_then(|d| d.as_str()) {
-            if desc.to_lowercase().contains(&query_lower) {
-                score += 1.0;
-            }
-        }
-
-        score
     }
 
     /// Clean up duplicate MCP contexts (useful for fixing existing duplicates)
