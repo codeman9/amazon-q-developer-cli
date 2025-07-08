@@ -97,48 +97,6 @@ impl MockMcpServer {
     }
 }
 
-/// Create a comprehensive set of mock MCP servers for testing
-pub fn create_mock_servers() -> Vec<MockMcpServer> {
-    vec![
-        // Weather server with multiple tools
-        MockMcpServer::new("weather-server")
-            .with_tool("get_current_weather", "Get current weather for a location", vec![
-                ("location", "string", true),
-                ("units", "string", false),
-            ])
-            .with_tool("get_forecast", "Get weather forecast", vec![
-                ("location", "string", true),
-                ("days", "number", false),
-            ]),
-        // File server with file operations
-        MockMcpServer::new("file-server")
-            .with_tool("read_file", "Read contents of a file", vec![
-                ("path", "string", true),
-                ("encoding", "string", false),
-            ])
-            .with_tool("write_file", "Write contents to a file", vec![
-                ("path", "string", true),
-                ("content", "string", true),
-                ("create_dirs", "boolean", false),
-            ]),
-        // Database server with query tools
-        MockMcpServer::new("database-server")
-            .with_tool("query_table", "Query database table", vec![
-                ("table", "string", true),
-                ("where_clause", "string", false),
-                ("limit", "number", false),
-            ])
-            .with_tool("insert_record", "Insert record into table", vec![
-                ("table", "string", true),
-                ("data", "object", true),
-            ]),
-        // Simple server with minimal tools
-        MockMcpServer::new("simple-server").with_tool("ping", "Simple ping command", vec![]),
-        // Failing server for error testing
-        MockMcpServer::new("failing-server").with_failure("Server is temporarily unavailable"),
-    ]
-}
-
 /// Create mock mcp.json configuration for testing
 pub fn create_mock_mcp_config(servers: &[MockMcpServer]) -> Value {
     let mut server_configs = serde_json::Map::new();
@@ -241,17 +199,6 @@ impl TestData {
         })
     }
 
-    /// Get tool with invalid schema
-    pub fn invalid_schema_tool() -> Value {
-        json!({
-            "name": "invalid_tool",
-            "description": "Tool with invalid schema",
-            "inputSchema": {
-                "type": "invalid_type",
-                "properties": "not_an_object"
-            }
-        })
-    }
 }
 
 /// Performance test utilities
