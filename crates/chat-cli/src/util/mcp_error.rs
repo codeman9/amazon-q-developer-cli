@@ -301,14 +301,6 @@ impl Default for RetryConfig {
 }
 
 impl RetryConfig {
-    /// Create a new retry configuration
-    pub fn new(max_attempts: u32) -> Self {
-        Self {
-            max_attempts,
-            ..Default::default()
-        }
-    }
-
     /// Calculate delay for a given attempt
     pub fn delay_for_attempt(&self, attempt: u32) -> Duration {
         if attempt == 0 {

@@ -697,11 +697,6 @@ impl KnowledgeStore {
     }
 
     /// Get all available MCP tools as function definitions for LLM
-    pub async fn get_all_mcp_tools_for_llm(&self) -> Result<Vec<serde_json::Value>, String> {
-        // Use a broad query to get all MCP tools
-        self.search_mcp_tools_for_llm("tool", Some(50)).await
-    }
-
     /// Create a tool spec from a search result (helper method)
     fn create_tool_spec_from_search_result(
         &self,

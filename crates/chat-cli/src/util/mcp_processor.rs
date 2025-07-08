@@ -121,12 +121,6 @@ impl McpDiscoveryService {
         Ok(Self { os })
     }
 
-    /// Discover all enabled MCP servers from both workspace and global configurations
-    #[instrument(skip(self))]
-    pub async fn discover_servers(&self) -> McpResult<Vec<McpServerInfo>> {
-        self.discover_servers_with_options(true).await
-    }
-
     /// Discover all enabled MCP servers with options
     #[instrument(skip(self))]
     pub async fn discover_servers_with_options(&self, verbose: bool) -> McpResult<Vec<McpServerInfo>> {
@@ -328,30 +322,6 @@ impl McpDiscoveryService {
         Ok(tools_result)
     }
 
-    /// Validate server health by attempting to connect and get basic info
-    #[instrument(skip(self, server))]
-    pub async fn validate_server_health(&self, server: &McpServerInfo) -> McpResult<bool> {
-        debug!("Validating health of server: {}", server.name);
-
-        let mut retry_executor = RetryExecutor::new(RetryConfig::new(2)); // Fewer retries for health checks
-
-        match retry_executor
-            .execute_for_server(&server.name, "health_check", || {
-                self.get_server_tool_schemas_with_error_handling(server)
-            })
-            .await
-        {
-            Ok(_) => {
-                debug!("Server '{}' is healthy", server.name);
-                Ok(true)
-            },
-            Err(e) => {
-                warn!("Server '{}' health check failed: {}", server.name, e);
-                Ok(false)
-            },
-        }
-    }
-
     /// Validate that a server configuration is valid
     pub fn validate_server_config(&self, server: &McpServerInfo) -> Result<()> {
         if server.name.is_empty() {
@@ -369,20 +339,6 @@ impl McpDiscoveryService {
         Ok(())
     }
 
-    /// Get the count of enabled servers from all configurations
-    pub async fn get_enabled_server_count(&self) -> Result<usize> {
-        let servers = self.discover_servers().await?;
-        Ok(servers.len())
-    }
-
-    /// Check if any MCP configuration files exist
-    pub async fn has_mcp_configuration(&self) -> bool {
-        let workspace_path = workspace_mcp_config_path(&self.os).unwrap_or_default();
-        let global_path = global_mcp_config_path(&self.os).unwrap_or_default();
-
-        self.os.fs.exists(&workspace_path) || self.os.fs.exists(&global_path)
-    }
-
     /// Discover MCP servers from a specific scope with options
     async fn discover_servers_from_scope_with_options(&self, scope: &str, verbose: bool) -> Result<Vec<McpServerInfo>> {
         let config_path = match scope {
@@ -392,12 +348,6 @@ impl McpDiscoveryService {
         };
 
         self.discover_servers_from_path_with_options(&config_path, scope, verbose)
-            .await
-    }
-
-    /// Discover MCP servers from a specific configuration file path
-    pub async fn discover_servers_from_path(&self, config_path: &Path, scope: &str) -> Result<Vec<McpServerInfo>> {
-        self.discover_servers_from_path_with_options(config_path, scope, true)
             .await
     }
 
@@ -460,53 +410,6 @@ impl ToolSchemaProcessor {
     /// Create a new tool schema processor
     pub fn new() -> Self {
         Self
-    }
-
-    /// Extract searchable content from tool schemas with error handling
-    #[instrument(skip(self, server, tools_result))]
-    pub fn extract_searchable_content(&self, server: &McpServerInfo, tools_result: &ToolsListResult) -> Vec<String> {
-        debug!(
-            "Extracting searchable content from {} tools for server '{}'",
-            tools_result.tools.len(),
-            server.name
-        );
-
-        let mut searchable_content = Vec::new();
-        let mut failed_count = 0;
-
-        for (index, tool) in tools_result.tools.iter().enumerate() {
-            match self.tool_to_searchable_text(server, tool) {
-                Some(content) => {
-                    searchable_content.push(content);
-                },
-                None => {
-                    failed_count += 1;
-                    warn!(
-                        "Failed to extract searchable content from tool {} (index {}) in server '{}'",
-                        tool.get("name").and_then(|n| n.as_str()).unwrap_or("unknown"),
-                        index,
-                        server.name
-                    );
-                },
-            }
-        }
-
-        if failed_count > 0 {
-            warn!(
-                "Failed to process {} out of {} tools from server '{}'",
-                failed_count,
-                tools_result.tools.len(),
-                server.name
-            );
-        } else {
-            debug!(
-                "Successfully processed all {} tools from server '{}'",
-                tools_result.tools.len(),
-                server.name
-            );
-        }
-
-        searchable_content
     }
 
     /// Create MCP contexts from tool schemas with comprehensive error handling

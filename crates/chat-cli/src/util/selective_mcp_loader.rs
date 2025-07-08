@@ -104,43 +104,10 @@ impl SelectiveMcpLoader {
         Ok(newly_loaded)
     }
 
-    /// Get all currently loaded servers
-    pub async fn get_loaded_servers(&self) -> HashMap<String, Arc<CustomToolClient>> {
-        self.loaded_servers.read().await.clone()
-    }
-
-    /// Preload commonly used servers (optional optimization)
-    pub async fn preload_common_servers(&self, server_names: &[String]) -> Result<()> {
-        self.load_servers(server_names).await?;
-        Ok(())
-    }
-
-    /// Unload unused servers to free resources
-    pub async fn unload_servers(&self, server_names: &[String]) -> Result<()> {
-        let mut loaded_servers = self.loaded_servers.write().await;
-
-        for server_name in server_names {
-            if let Some(client) = loaded_servers.remove(server_name) {
-                // Gracefully shutdown the client if possible
-                // Note: CustomToolClient doesn't have explicit shutdown,
-                // but dropping it should clean up resources
-                drop(client);
-                tracing::info!("✓ Unloaded MCP server: {}", server_name);
-            }
-        }
-
-        Ok(())
-    }
-
     /// Get server statistics
     pub async fn get_server_stats(&self) -> ServerStats {
-        let loaded_servers = self.loaded_servers.read().await;
-
         ServerStats {
             total_available: self.available_servers.len(),
-            currently_loaded: loaded_servers.len(),
-            available_servers: self.available_servers.keys().cloned().collect(),
-            loaded_servers: loaded_servers.keys().cloned().collect(),
         }
     }
 
@@ -164,36 +131,6 @@ impl SelectiveMcpLoader {
 #[derive(Debug, Clone)]
 pub struct ServerStats {
     pub total_available: usize,
-    pub currently_loaded: usize,
-    pub available_servers: Vec<String>,
-    pub loaded_servers: Vec<String>,
-}
-
-/// Integration with existing ToolManager
-impl SelectiveMcpLoader {
-    /// Get servers for LLM tool calling based on conversation context
-    pub async fn get_servers_for_conversation(&self, context: &str) -> Result<HashMap<String, Arc<CustomToolClient>>> {
-        // Use RAG to determine relevant servers
-        let server_names = self.get_servers_for_query(context, Some(5)).await?;
-
-        // Load only the relevant servers
-        self.load_servers(&server_names).await
-    }
-
-    /// Smart loading: preload common servers, load others on-demand
-    pub async fn smart_load(&self, query: Option<&str>) -> Result<HashMap<String, Arc<CustomToolClient>>> {
-        // Always preload these commonly used servers
-        let common_servers = vec!["git".to_string(), "fetch".to_string()];
-        self.preload_common_servers(&common_servers).await?;
-
-        // If we have a specific query, load relevant servers
-        if let Some(query) = query {
-            let relevant_servers = self.get_servers_for_query(query, Some(3)).await?;
-            self.load_servers(&relevant_servers).await?;
-        }
-
-        Ok(self.get_loaded_servers().await)
-    }
 }
 
 #[cfg(test)]

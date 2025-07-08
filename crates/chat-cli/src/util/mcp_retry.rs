@@ -38,19 +38,6 @@ pub struct CircuitBreaker {
 }
 
 impl CircuitBreaker {
-    /// Create a new circuit breaker
-    pub fn new(failure_threshold: u32, recovery_timeout: Duration) -> Self {
-        Self {
-            state: CircuitState::Closed,
-            failure_count: 0,
-            failure_threshold,
-            recovery_timeout,
-            last_failure_time: None,
-            success_threshold: 3,
-            half_open_successes: 0,
-        }
-    }
-
     /// Check if the circuit breaker allows the operation
     pub fn can_execute(&mut self) -> bool {
         match self.state {
@@ -119,11 +106,6 @@ impl CircuitBreaker {
             },
         }
     }
-
-    /// Get the current state
-    pub fn state(&self) -> &CircuitState {
-        &self.state
-    }
 }
 
 /// Retry executor with exponential backoff and circuit breaker
@@ -138,14 +120,6 @@ impl RetryExecutor {
         Self {
             config,
             circuit_breaker: None,
-        }
-    }
-
-    /// Create a retry executor with circuit breaker
-    pub fn with_circuit_breaker(config: RetryConfig, failure_threshold: u32, recovery_timeout: Duration) -> Self {
-        Self {
-            config,
-            circuit_breaker: Some(CircuitBreaker::new(failure_threshold, recovery_timeout)),
         }
     }
 
@@ -262,63 +236,6 @@ impl RetryExecutor {
     {
         let full_operation_name = format!("{}:{}", server_name, operation_name);
         self.execute(&full_operation_name, operation).await
-    }
-}
-
-/// Health monitor for MCP servers
-#[derive(Debug)]
-pub struct HealthMonitor {
-    server_states: std::collections::HashMap<String, CircuitBreaker>,
-    #[allow(dead_code)]
-    check_interval: Duration,
-}
-
-impl HealthMonitor {
-    /// Create a new health monitor
-    pub fn new(check_interval: Duration) -> Self {
-        Self {
-            server_states: std::collections::HashMap::new(),
-            check_interval,
-        }
-    }
-
-    /// Get or create a circuit breaker for a server
-    pub fn get_circuit_breaker(&mut self, server_name: &str) -> &mut CircuitBreaker {
-        self.server_states
-            .entry(server_name.to_string())
-            .or_insert_with(|| CircuitBreaker::new(3, Duration::from_secs(30)))
-    }
-
-    /// Check if a server is healthy
-    pub fn is_server_healthy(&mut self, server_name: &str) -> bool {
-        self.get_circuit_breaker(server_name).can_execute()
-    }
-
-    /// Record a successful operation for a server
-    pub fn record_server_success(&mut self, server_name: &str) {
-        self.get_circuit_breaker(server_name).record_success();
-    }
-
-    /// Record a failed operation for a server
-    pub fn record_server_failure(&mut self, server_name: &str) {
-        self.get_circuit_breaker(server_name).record_failure();
-    }
-
-    /// Get the health status of all servers
-    pub fn get_server_health_status(&self) -> std::collections::HashMap<String, CircuitState> {
-        self.server_states
-            .iter()
-            .map(|(name, cb)| (name.clone(), cb.state().clone()))
-            .collect()
-    }
-
-    /// Get unhealthy servers
-    pub fn get_unhealthy_servers(&self) -> Vec<String> {
-        self.server_states
-            .iter()
-            .filter(|(_, cb)| cb.state() != &CircuitState::Closed)
-            .map(|(name, _)| name.clone())
-            .collect()
     }
 }
 
