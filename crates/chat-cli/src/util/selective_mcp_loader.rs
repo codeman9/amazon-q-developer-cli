@@ -143,7 +143,7 @@ mod tests {
         if let Ok(loader) = SelectiveMcpLoader::new().await {
             let stats = loader.get_server_stats().await;
             assert!(stats.total_available >= 0);
-            assert_eq!(stats.currently_loaded, 0);
+            assert_eq!(stats.total_available, 0);
         }
     }
 

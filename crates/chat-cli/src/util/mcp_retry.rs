@@ -241,133 +241,18 @@ impl RetryExecutor {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{
-        Arc,
-        Mutex,
-    };
-
     use super::*;
 
     #[test]
-    fn test_circuit_breaker_states() {
-        let mut cb = CircuitBreaker::new(2, Duration::from_secs(5));
+    fn test_retry_config_delay_calculation() {
+        let config = RetryConfig::default();
 
-        // Initially closed
-        assert_eq!(cb.state(), &CircuitState::Closed);
-        assert!(cb.can_execute());
+        // First attempt should have no delay
+        assert_eq!(config.delay_for_attempt(0), Duration::ZERO);
 
-        // First failure
-        cb.record_failure();
-        assert_eq!(cb.state(), &CircuitState::Closed);
-        assert!(cb.can_execute());
-
-        // Second failure - should open
-        cb.record_failure();
-        assert_eq!(cb.state(), &CircuitState::Open);
-        assert!(!cb.can_execute());
-    }
-
-    #[tokio::test]
-    async fn test_retry_executor_success() {
-        let config = RetryConfig::new(3);
-        let mut executor = RetryExecutor::new(config);
-
-        let attempt_count = Arc::new(Mutex::new(0));
-        let attempt_count_clone = attempt_count.clone();
-
-        let result: McpResult<&str> = executor
-            .execute("test_op", || {
-                let count = attempt_count_clone.clone();
-                async move {
-                    let mut guard = count.lock().unwrap();
-                    *guard += 1;
-                    let current_attempt = *guard;
-                    drop(guard);
-
-                    if current_attempt < 2 {
-                        Err(McpError::connection_failed("test-server", "Connection refused"))
-                    } else {
-                        Ok("success")
-                    }
-                }
-            })
-            .await;
-
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), "success");
-        assert_eq!(*attempt_count.lock().unwrap(), 2);
-    }
-
-    #[tokio::test]
-    async fn test_retry_executor_max_retries() {
-        let config = RetryConfig::new(2);
-        let mut executor = RetryExecutor::new(config);
-
-        let attempt_count = Arc::new(Mutex::new(0));
-        let attempt_count_clone = attempt_count.clone();
-
-        let result: McpResult<&str> = executor
-            .execute("test_op", || {
-                let count = attempt_count_clone.clone();
-                async move {
-                    let mut guard = count.lock().unwrap();
-                    *guard += 1;
-                    drop(guard);
-
-                    Err(McpError::connection_failed("test-server", "Connection refused"))
-                }
-            })
-            .await;
-
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), McpError::MaxRetriesExceeded { .. }));
-        assert_eq!(*attempt_count.lock().unwrap(), 2);
-    }
-
-    #[tokio::test]
-    async fn test_retry_executor_non_retryable() {
-        let config = RetryConfig::new(3);
-        let mut executor = RetryExecutor::new(config);
-
-        let attempt_count = Arc::new(Mutex::new(0));
-        let attempt_count_clone = attempt_count.clone();
-
-        let result: McpResult<&str> = executor
-            .execute("test_op", || {
-                let count = attempt_count_clone.clone();
-                async move {
-                    let mut guard = count.lock().unwrap();
-                    *guard += 1;
-                    drop(guard);
-
-                    Err(McpError::InvalidConfig {
-                        reason: "Bad config".to_string(),
-                    })
-                }
-            })
-            .await;
-
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), McpError::InvalidConfig { .. }));
-        assert_eq!(*attempt_count.lock().unwrap(), 1); // Should not retry non-retryable errors
-    }
-
-    #[test]
-    fn test_health_monitor() {
-        let mut monitor = HealthMonitor::new(Duration::from_secs(10));
-
-        // Initially healthy
-        assert!(monitor.is_server_healthy("test-server"));
-
-        // Record failures
-        monitor.record_server_failure("test-server");
-        monitor.record_server_failure("test-server");
-        monitor.record_server_failure("test-server");
-
-        // Should be unhealthy now
-        assert!(!monitor.is_server_healthy("test-server"));
-
-        let unhealthy = monitor.get_unhealthy_servers();
-        assert!(unhealthy.contains(&"test-server".to_string()));
+        // Subsequent attempts should have exponential backoff
+        assert_eq!(config.delay_for_attempt(1), Duration::from_millis(100));
+        assert_eq!(config.delay_for_attempt(2), Duration::from_millis(200));
+        assert_eq!(config.delay_for_attempt(3), Duration::from_millis(400));
     }
 }

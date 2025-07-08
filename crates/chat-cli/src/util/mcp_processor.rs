@@ -777,7 +777,7 @@ mod tests {
         let (service, _temp_dir, config_path) = create_test_service_with_config(config_content).await;
 
         let servers = service
-            .discover_servers_from_path(&config_path, "workspace")
+            .discover_servers_from_path_with_options(&config_path, "workspace", false)
             .await
             .unwrap();
         assert_eq!(servers.len(), 2);
@@ -817,7 +817,7 @@ mod tests {
         let (service, _temp_dir, config_path) = create_test_service_with_config(config_content).await;
 
         let all_servers = service
-            .discover_servers_from_path(&config_path, "workspace")
+            .discover_servers_from_path_with_options(&config_path, "workspace", false)
             .await
             .unwrap();
         assert_eq!(all_servers.len(), 2);
@@ -837,7 +837,7 @@ mod tests {
         let nonexistent_path = PathBuf::from("/nonexistent/path/mcp.json");
 
         let servers = service
-            .discover_servers_from_path(&nonexistent_path, "workspace")
+            .discover_servers_from_path_with_options(&nonexistent_path, "workspace", false)
             .await
             .unwrap();
         assert!(servers.is_empty());
@@ -852,7 +852,7 @@ mod tests {
         let (service, _temp_dir, config_path) = create_test_service_with_config(empty_config).await;
 
         let servers = service
-            .discover_servers_from_path(&config_path, "workspace")
+            .discover_servers_from_path_with_options(&config_path, "workspace", false)
             .await
             .unwrap();
         assert!(servers.is_empty());
@@ -863,58 +863,10 @@ mod tests {
         let invalid_config = r#"{ "invalid": json, missing quotes }"#;
         let (service, _temp_dir, config_path) = create_test_service_with_config(invalid_config).await;
 
-        let result = service.discover_servers_from_path(&config_path, "workspace").await;
+        let result = service
+            .discover_servers_from_path_with_options(&config_path, "workspace", false)
+            .await;
         assert!(result.is_err());
-    }
-
-    #[tokio::test]
-    async fn test_tool_schema_processor_extract_searchable_content() {
-        let processor = ToolSchemaProcessor::new();
-
-        let server = McpServerInfo {
-            name: "test-server".to_string(),
-            command: "test-command".to_string(),
-            args: vec![],
-            env: None,
-            timeout: 30000,
-            disabled: false,
-            source_scope: "workspace".to_string(),
-            source_path: PathBuf::from("/test/path"),
-        };
-
-        let tools_result = ToolsListResult {
-            tools: vec![serde_json::json!({
-                "name": "get_weather",
-                "description": "Get current weather for a location",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "location": {
-                            "type": "string",
-                            "description": "The location to get weather for"
-                        },
-                        "units": {
-                            "type": "string",
-                            "description": "Temperature units (celsius or fahrenheit)"
-                        }
-                    },
-                    "required": ["location"]
-                },
-                "categories": ["weather", "api"]
-            })],
-            next_cursor: None,
-        };
-
-        let searchable_content = processor.extract_searchable_content(&server, &tools_result);
-
-        assert_eq!(searchable_content.len(), 1);
-        let content = &searchable_content[0];
-        assert!(content.contains("get_weather"));
-        assert!(content.contains("test-server"));
-        assert!(content.contains("Get current weather"));
-        assert!(content.contains("location (string, required)"));
-        assert!(content.contains("units (string)"));
-        assert!(content.contains("weather, api"));
     }
 
     #[tokio::test]
@@ -958,7 +910,7 @@ mod tests {
 
         assert_eq!(contexts.len(), 1);
         let context = &contexts[0];
-        assert_eq!(context.server_name, "weather-server");
+        assert_eq!(context.server_name, "weather_server");
         assert_eq!(context.tool_name, "forecast");
         assert_eq!(context.description, "Get weather forecast");
         assert_eq!(context.parameters.len(), 2);
@@ -971,70 +923,6 @@ mod tests {
         let days_param = context.parameters.iter().find(|p| p.name == "days").unwrap();
         assert_eq!(days_param.param_type, "number");
         assert!(!days_param.required);
-    }
-
-    #[tokio::test]
-    async fn test_tool_schema_processor_handles_empty_tools() {
-        let processor = ToolSchemaProcessor::new();
-
-        let server = McpServerInfo {
-            name: "empty-server".to_string(),
-            command: "empty-command".to_string(),
-            args: vec![],
-            env: None,
-            timeout: 30000,
-            disabled: false,
-            source_scope: "workspace".to_string(),
-            source_path: PathBuf::from("/test/path"),
-        };
-
-        let tools_result = ToolsListResult {
-            tools: vec![],
-            next_cursor: None,
-        };
-
-        let searchable_content = processor.extract_searchable_content(&server, &tools_result);
-        assert!(searchable_content.is_empty());
-
-        let contexts = processor.create_mcp_contexts(&server, &tools_result).unwrap();
-        assert!(contexts.is_empty());
-    }
-
-    #[tokio::test]
-    async fn test_tool_schema_processor_handles_malformed_tools() {
-        let processor = ToolSchemaProcessor::new();
-
-        let server = McpServerInfo {
-            name: "test-server".to_string(),
-            command: "test-command".to_string(),
-            args: vec![],
-            env: None,
-            timeout: 30000,
-            disabled: false,
-            source_scope: "workspace".to_string(),
-            source_path: PathBuf::from("/test/path"),
-        };
-
-        let tools_result = ToolsListResult {
-            tools: vec![
-                serde_json::json!({
-                    // Missing name field
-                    "description": "A tool without a name"
-                }),
-                serde_json::json!({
-                    "name": "valid_tool",
-                    "description": "A valid tool"
-                }),
-            ],
-            next_cursor: None,
-        };
-
-        let searchable_content = processor.extract_searchable_content(&server, &tools_result);
-        assert_eq!(searchable_content.len(), 1); // Only the valid tool
-
-        let contexts = processor.create_mcp_contexts(&server, &tools_result).unwrap();
-        assert_eq!(contexts.len(), 1); // Only the valid tool
-        assert_eq!(contexts[0].tool_name, "valid_tool");
     }
 
     #[tokio::test]

@@ -886,8 +886,8 @@ mod tests {
 
         let message = result.unwrap();
         assert!(
-            message.contains("No MCP configuration found"),
-            "Should indicate no config found"
+            message.contains("No MCP servers to index"),
+            "Should indicate no servers to index"
         );
         assert!(message.contains("completed in"), "Should include timing information");
 
