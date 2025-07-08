@@ -458,10 +458,48 @@ impl ToolSchemaProcessor {
                 format!("Tool: {} from {} server", tool_name, server.name)
             });
 
+        // Extract server name from tool name if it follows the server___tool convention
+        let (normalized_server_name, clean_tool_name) = if tool_name.contains("___") {
+            let parts: Vec<&str> = tool_name.splitn(2, "___").collect();
+            if parts.len() == 2 {
+                (parts[0].to_string(), parts[1].to_string())
+            } else {
+                // Fallback to original server name normalization
+                let normalized = server.name
+                    .replace("-", "_")
+                    .chars()
+                    .enumerate()
+                    .fold(String::new(), |mut acc, (i, c)| {
+                        if i > 0 && c.is_uppercase() {
+                            acc.push('_');
+                        }
+                        acc.push(c);
+                        acc
+                    })
+                    .to_lowercase();
+                (normalized, tool_name.to_string())
+            }
+        } else {
+            // Fallback to original server name normalization
+            let normalized = server.name
+                .replace("-", "_")
+                .chars()
+                .enumerate()
+                .fold(String::new(), |mut acc, (i, c)| {
+                    if i > 0 && c.is_uppercase() {
+                        acc.push('_');
+                    }
+                    acc.push(c);
+                    acc
+                })
+                .to_lowercase();
+            (normalized, tool_name.to_string())
+        };
+
         let context = McpToolContext {
-            id: format!("{}_{}", server.name, tool_name),
-            server_name: server.name.clone(),
-            tool_name: tool_name.to_string(),
+            id: format!("{}_{}", normalized_server_name, clean_tool_name),
+            server_name: normalized_server_name,
+            tool_name: clean_tool_name,
             description,
             parameters,
             server_config: server.to_semantic_config(),

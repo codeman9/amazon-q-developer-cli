@@ -617,7 +617,7 @@ impl KnowledgeStore {
             
             for context in all_contexts {
                 if context.name.starts_with("mcp_") {
-                    // Extract server name from context name (remove "mcp_" prefix)
+                    // Extract server name from context name (remove "mcp_" prefix, already normalized)
                     let server_name = context.name.strip_prefix("mcp_").unwrap_or(&context.name);
                     
                     // Create a basic tool spec from context metadata
@@ -665,12 +665,11 @@ impl KnowledgeStore {
             .unwrap_or("unknown_tool")
             .to_string();
             
-        // Extract server name from the data point payload
+        // Extract server name from the data point payload (already normalized)
         let server_name = result.point.payload
             .get("server_name")
             .and_then(|v| v.as_str())
-            .unwrap_or("unknown_server")
-            .to_string();
+            .unwrap_or("unknown_server");
             
         // Extract description from the data point payload or text content
         let description = result.point.payload
