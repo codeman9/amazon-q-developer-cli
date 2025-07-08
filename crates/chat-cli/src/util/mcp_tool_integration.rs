@@ -10,6 +10,54 @@ use crate::cli::chat::tools::{
 };
 use crate::util::mcp_llm_integration::McpLlmIntegration;
 
+/// Service for integrating MCP tools with the existing tool system
+pub struct McpToolIntegrationService {
+    llm_integration: McpLlmIntegration,
+}
+
+impl McpToolIntegrationService {
+    /// Create a new MCP tool integration service
+    pub async fn new() -> Result<Self, String> {
+        let llm_integration = McpLlmIntegration::new().await?;
+        Ok(Self { llm_integration })
+    }
+
+    /// Get MCP tools for a specific query
+    pub async fn get_mcp_tools_for_query(
+        &self,
+        query: &str,
+        max_tools: Option<usize>,
+    ) -> Result<Vec<ToolSpec>, String> {
+        let mcp_tools = self.llm_integration.get_tools_for_query(query, max_tools).await?;
+
+        let mut tools = Vec::new();
+        for tool in mcp_tools {
+            if let Some(tool_spec) = convert_mcp_tool_to_tool_spec(&tool)? {
+                tools.push(tool_spec);
+            }
+        }
+
+        Ok(tools)
+    }
+
+    /// Check if MCP tools are available
+    pub async fn are_mcp_tools_available(&self) -> bool {
+        self.llm_integration.are_mcp_tools_available().await
+    }
+
+    /// Get MCP tool specifications
+    pub async fn get_mcp_tool_specs(&self) -> Result<HashMap<String, ToolSpec>, String> {
+        let tool_specs = self.get_mcp_tools_for_query("", Some(50)).await?;
+
+        let mut specs_map = HashMap::new();
+        for spec in tool_specs {
+            specs_map.insert(spec.name.clone(), spec);
+        }
+
+        Ok(specs_map)
+    }
+}
+
 /// Helper function to integrate MCP tools into existing tool configuration
 pub async fn integrate_mcp_tools_into_config(
     mut tool_config: HashMap<String, ToolSpec>,

@@ -29,6 +29,41 @@ impl McpLlmIntegration {
             .search_mcp_tools_for_llm(query, Some(limit))
             .await
     }
+
+    /// Check if MCP tools are available and indexed
+    pub async fn are_mcp_tools_available(&self) -> bool {
+        match self.get_tools_for_query("", Some(1)).await {
+            Ok(tools) => !tools.is_empty(),
+            Err(_) => false,
+        }
+    }
+
+    /// Get basic statistics about available MCP tools
+    pub async fn get_tool_statistics(&self) -> Result<McpToolStatistics, String> {
+        let tools = self.get_tools_for_query("", Some(100)).await?;
+
+        // Count unique servers (extract from tool names)
+        let mut servers = std::collections::HashSet::new();
+        for tool in &tools {
+            if let Some(name) = tool.get("name").and_then(|n| n.as_str()) {
+                if let Some(server_name) = name.split('_').next() {
+                    servers.insert(server_name.to_string());
+                }
+            }
+        }
+
+        Ok(McpToolStatistics {
+            total_tools: tools.len(),
+            server_count: servers.len(),
+        })
+    }
+}
+
+/// Basic statistics about available MCP tools
+#[derive(Debug, Clone)]
+pub struct McpToolStatistics {
+    pub total_tools: usize,
+    pub server_count: usize,
 }
 
 #[cfg(test)]
