@@ -55,7 +55,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Test 4: Try integration function
     println!("4. Testing integration function...");
-    let mut empty_config = HashMap::new();
+    let empty_config = HashMap::new();
     match integrate_mcp_tools_into_config(empty_config).await {
         Ok(integrated) => println!("   Integration successful, got {} tools", integrated.len()),
         Err(e) => println!("   Integration failed: {}", e),
