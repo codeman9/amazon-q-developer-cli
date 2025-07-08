@@ -11,10 +11,12 @@ use crate::cli::chat::tools::{
 use crate::util::mcp_llm_integration::McpLlmIntegration;
 
 /// Service for integrating MCP tools with the existing tool system
+#[allow(dead_code)]
 pub struct McpToolIntegrationService {
     llm_integration: McpLlmIntegration,
 }
 
+#[allow(dead_code)]
 impl McpToolIntegrationService {
     /// Create a new MCP tool integration service
     pub async fn new() -> Result<Self, String> {

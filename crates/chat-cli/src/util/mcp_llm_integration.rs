@@ -31,6 +31,7 @@ impl McpLlmIntegration {
     }
 
     /// Check if MCP tools are available and indexed
+    #[allow(dead_code)]
     pub async fn are_mcp_tools_available(&self) -> bool {
         match self.get_tools_for_query("", Some(1)).await {
             Ok(tools) => !tools.is_empty(),
@@ -39,6 +40,7 @@ impl McpLlmIntegration {
     }
 
     /// Get basic statistics about available MCP tools
+    #[allow(dead_code)]
     pub async fn get_tool_statistics(&self) -> Result<McpToolStatistics, String> {
         let tools = self.get_tools_for_query("", Some(100)).await?;
 
@@ -60,6 +62,7 @@ impl McpLlmIntegration {
 }
 
 /// Basic statistics about available MCP tools
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct McpToolStatistics {
     pub total_tools: usize,
